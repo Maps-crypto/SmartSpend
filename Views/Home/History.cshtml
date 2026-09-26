@@ -1,0 +1,342 @@
+﻿@model IEnumerable<SmartSpend.Models.BudgetHistory>
+
+@{
+    ViewBag.Title = "History";
+    Layout = "~/Views/Shared/favlay.cshtml";
+
+    var sorted = (Model ?? new List<SmartSpend.Models.BudgetHistory>())
+        .OrderByDescending(x => x.DateExported)
+        .ToList();
+}
+
+<div class="page-body history-page">
+
+    <div class="history-head">
+        <h2 class="section-title">Export History</h2>
+        <p class="history-subtitle">Every shopping list you've exported, saved here automatically.</p>
+    </div>
+
+    @if (!sorted.Any())
+    {
+        <div class="history-empty">
+            <p>You haven't exported a shopping list yet.</p>
+            <p class="history-empty-sub">Use the <strong>Export</strong> button on your shopping list to save one here.</p>
+        </div>
+    }
+    else
+    {
+        <div class="history-search">
+            <input type="text" id="history-date-search" placeholder="Search by date, e.g. 26 Sep or 2026-09-26" autocomplete="off">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+        </div>
+
+        <p class="history-no-match" id="history-no-match" hidden>No exports match that date.</p>
+
+        <div class="history-grid" id="history-grid">
+            @foreach (var item in sorted)
+            {
+                var searchTokens = string.Join(" ", new[]
+                {
+                    item.DateExported.ToString("yyyy-MM-dd"),
+                    item.DateExported.ToString("dd/MM/yyyy"),
+                    item.DateExported.ToString("dd MMM yyyy"),
+                    item.DateExported.ToString("MMMM dd yyyy"),
+                    item.DateExported.ToString("MMM"),
+                    item.DateExported.ToString("MMMM"),
+                    item.DateExported.ToString("ddd"),
+                    item.DateExported.ToString("dddd"),
+                    item.DateExported.ToString("yyyy")
+                }).ToLowerInvariant();
+
+                <div class="history-card" data-search="@searchTokens">
+                    <div class="history-card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="9" y1="13" x2="15" y2="13"></line>
+                            <line x1="9" y1="17" x2="13" y2="17"></line>
+                        </svg>
+                    </div>
+                    <div class="history-card-body">
+                        <div class="history-card-title">Shopping List Export</div>
+                        @*<div class="history-card-filename" title="@item.filename">@item.filename</div>*@
+                        <div class="history-card-date"><b>@item.DateExported.ToString("ddd, dd MMM yyyy · HH:mm")</b></div>
+                    </div>
+                    <button type="button"
+                            class="history-download-btn"
+                            data-url="@Url.Action("DownloadHistoryFile", "Home", new { id = item.fileID })"
+                            data-filename="@item.filename">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 3v12"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <path d="M5 21h14"></path>
+                        </svg>
+                        <span class="btn-label">Download</span>
+                    </button>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/2.1.4/toastr.min.css" rel="stylesheet" />
+
+<style>
+    #toast-container > .toast {
+        position: relative;
+        top: auto;
+        right: auto;
+        bottom: auto;
+        left: auto;
+        transform: none;
+        transition: none;
+        pointer-events: auto;
+    }
+
+    .history-page {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 20px 16px 60px;
+    }
+
+    .history-head {
+        margin-bottom: 20px;
+    }
+
+    .history-subtitle {
+        margin: 4px 0 0;
+        color: var(--text-muted, #64748b);
+        font-size: 13.5px;
+    }
+
+    .history-search {
+        position: relative;
+        margin: 0 0 16px;
+    }
+
+        .history-search input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 11px 14px 11px 40px;
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 12px;
+            background: var(--surface, #fff);
+            color: var(--text, #0f172a);
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+            .history-search input:focus {
+                outline: none;
+                border-color: #16a34a;
+            }
+
+        .history-search svg {
+            position: absolute;
+            left: 13px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 17px;
+            height: 17px;
+            color: var(--text-muted, #64748b);
+            pointer-events: none;
+        }
+
+    .history-no-match {
+        text-align: center;
+        color: var(--text-muted, #64748b);
+        font-size: 13.5px;
+        padding: 20px 0;
+    }
+
+    .history-empty {
+        border: 2px dashed var(--border, #cbd5e1);
+        border-radius: 14px;
+        background: var(--surface, #fff);
+        padding: 40px 20px;
+        text-align: center;
+        color: var(--text-muted, #64748b);
+    }
+
+        .history-empty p {
+            margin: 0 0 6px;
+        }
+
+    .history-empty-sub {
+        font-size: 13px;
+    }
+
+    .history-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 14px;
+    }
+
+    .history-card {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 14px;
+        background: var(--surface, #fff);
+        padding: 16px;
+    }
+
+    .history-card-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--accent-soft, #eef2ff);
+        color: var(--accent, #4338ca);
+    }
+
+    .history-card-title {
+        font-weight: 600;
+        font-size: 14.5px;
+        color: var(--text, #0f172a);
+    }
+
+    .history-card-filename {
+        font-size: 12.5px;
+        color: var(--text-muted, #64748b);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .history-card-date {
+        font-size: 12.5px;
+        color: var(--text-muted, #64748b);
+    }
+
+    .history-download-btn {
+        margin-top: 4px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border: none;
+        border-radius: 10px;
+        background: #16a34a;
+        color: #fff;
+        font-weight: 600;
+        font-size: 13.5px;
+        padding: 9px 14px;
+        cursor: pointer;
+        transition: background 0.15s ease, opacity 0.15s ease;
+    }
+
+        .history-download-btn:hover:not(:disabled) {
+            background: #15803d;
+        }
+
+        .history-download-btn:disabled {
+            opacity: 0.6;
+            cursor: wait;
+        }
+</style>
+
+<script>
+    if (!window.jQuery) {
+        document.write('<scr' + 'ipt src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></scr' + 'ipt>');
+    }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/2.1.4/toastr.min.js"></script>
+<script>
+    toastr.options = {
+        "closeButton": true,
+        "debug": false,
+        "newestOnTop": false,
+        "progressBar": false,
+        "positionClass": "toast-top-full-width",
+        "preventDuplicates": false,
+        "showDuration": "300",
+        "hideDuration": "1000",
+        "timeOut": "6000",
+        "extendedTimeOut": "1000",
+        "showEasing": "swing",
+        "hideEasing": "linear",
+        "showMethod": "fadeIn",
+        "hideMethod": "fadeOut"
+    };
+
+    function showToast(message, type) {
+        var method = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
+        toastr[method](message, '', { timeOut: type === 'success' ? 2500 : 6000 });
+    }
+
+    // Streams the file back through the server (rather than linking straight to the Supabase
+    // URL) so we always get a real "Save As" download with the original filename, and can
+    // toast if something goes wrong - e.g. the object was deleted from the bucket.
+    function downloadHistoryFile(btn) {
+        var url = btn.getAttribute('data-url');
+        var filename = btn.getAttribute('data-filename') || 'SmartSpend-Shopping-List.pdf';
+        var label = btn.querySelector('.btn-label');
+        var originalText = label ? label.textContent : '';
+
+        btn.disabled = true;
+        if (label) label.textContent = 'Preparing…';
+
+        fetch(url, { method: 'GET', credentials: 'same-origin' })
+            .then(function (res) {
+                if (!res.ok) throw new Error('Request failed: ' + res.status);
+                return res.blob();
+            })
+            .then(function (blob) {
+                var blobUrl = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(blobUrl);
+                showToast('Download started', 'success');
+            })
+            .catch(function () {
+                showToast('Could not download that file. Please try again.', 'error');
+            })
+            .finally(function () {
+                btn.disabled = false;
+                if (label) label.textContent = originalText;
+            });
+    }
+
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest('.history-download-btn');
+        if (!btn) return;
+        downloadHistoryFile(btn);
+    });
+
+    // ---------------- Date search (filters as you type, no debounce needed - it's all
+    // client-side over cards already on the page) ----------------
+    (function () {
+        var input = document.getElementById('history-date-search');
+        if (!input) return; // no search bar when there's no history to search
+
+        var grid = document.getElementById('history-grid');
+        var noMatch = document.getElementById('history-no-match');
+        var cards = Array.prototype.slice.call(grid.querySelectorAll('.history-card'));
+
+        function applyDateFilter() {
+            var query = input.value.trim().toLowerCase();
+            var visibleCount = 0;
+
+            cards.forEach(function (card) {
+                var matches = query === '' || (card.dataset.search || '').indexOf(query) !== -1;
+                card.style.display = matches ? '' : 'none';
+                if (matches) visibleCount++;
+            });
+
+            noMatch.hidden = visibleCount !== 0;
+        }
+
+        input.addEventListener('input', applyDateFilter);
+    })();
+</script>

@@ -1,0 +1,361 @@
+﻿@using SmartSpend.Models
+@model LoginViewModel
+
+@{
+    ViewBag.Title = "Log in";
+}
+
+<style>
+    :root {
+        --green: #1a7a4c;
+        --green-dark: #145c3a;
+        --green-light: #e6f4ec;
+        --text-dark: #1f2937;
+        --text-muted: #6b7280;
+        --border: #e5e7eb;
+        --border-focus: #1a7a4c;
+        --error: #dc2626;
+        --error-bg: #fef2f2;
+        --page-bg: #f8f8fc;
+        --card-bg: #ffffff;
+        --radius: 12px;
+    }
+
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--page-bg);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: var(--text-dark);
+        padding: 40px 20px;
+    }
+
+    .auth-wrapper {
+        width: 100%;
+        max-width: 420px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .brand {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        margin-bottom: 28px;
+    }
+
+    .brand-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        background: var(--border); /* light gray (#e5e7eb). Use "transparent" for no box */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 14px;
+    }
+
+        .brand-icon img {
+            width: 32px;
+            height: 32px;
+            object-fit: contain;
+        }
+
+    .brand-name {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--green);
+        margin: 0 0 18px 0;
+    }
+
+    .auth-heading {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--text-dark);
+        margin: 0 0 4px 0;
+        text-align: center;
+    }
+
+    .auth-subtitle {
+        font-size: 14px;
+        color: var(--text-muted);
+        margin: 0;
+        text-align: center;
+    }
+
+    .auth-card {
+        width: 100%;
+        background: var(--card-bg);
+        border-radius: var(--radius);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        padding: 28px;
+        margin-top: 24px;
+    }
+
+    .field {
+        margin-bottom: 18px;
+    }
+
+        .field:last-of-type {
+            margin-bottom: 0;
+        }
+
+        .field label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-dark);
+            margin-bottom: 6px;
+        }
+
+    .input-group {
+        position: relative;
+    }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 14px;
+            font-size: 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fafafa;
+            color: var(--text-dark);
+            outline: none;
+            transition: border-color 0.15s ease, background 0.15s ease;
+            font-family: inherit;
+        }
+
+            .input-group input::placeholder {
+                color: #9ca3af;
+            }
+
+            .input-group input:focus {
+                border-color: var(--border-focus);
+                background: #ffffff;
+            }
+
+        .input-group.has-toggle input {
+            padding-right: 44px;
+        }
+
+    .toggle-visibility {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 4px;
+        display: flex;
+        align-items: center;
+        color: #6b7280;
+    }
+
+        .toggle-visibility svg {
+            width: 20px;
+            height: 20px;
+        }
+
+    .field.error input {
+        border-color: var(--error);
+        background: var(--error-bg);
+    }
+
+    .field.error .toggle-visibility {
+        color: var(--error);
+    }
+
+    .error-message {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        color: var(--error);
+        font-size: 12.5px;
+        margin-top: 6px;
+    }
+
+    .field.error .error-message {
+        display: flex;
+    }
+
+    .error-message svg {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+    }
+
+    .form-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 16px 0 20px 0;
+        font-size: 13.5px;
+    }
+
+    .remember-me {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--text-dark);
+    }
+
+        .remember-me input {
+            accent-color: var(--green);
+        }
+
+    .link {
+        color: var(--green);
+        text-decoration: none;
+        font-weight: 600;
+    }
+
+        .link:hover {
+            text-decoration: underline;
+        }
+
+    .btn-primary {
+        width: 100%;
+        padding: 13px;
+        background: var(--green);
+        color: #ffffff;
+        border: none;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: background 0.15s ease;
+        font-family: inherit;
+    }
+
+        .btn-primary:hover {
+            background: var(--green-dark);
+        }
+
+    .switch-auth {
+        text-align: center;
+        margin-top: 20px;
+        font-size: 13.5px;
+        color: var(--text-muted);
+    }
+
+    .helper-text {
+        text-align: center;
+        font-size: 12.5px;
+        color: var(--text-muted);
+        margin-top: 14px;
+    }
+
+    /* Server-side errors (only rendered after a failed POST) */
+    .server-errors {
+        background: var(--error-bg);
+        border: 1px solid var(--error);
+        border-radius: 8px;
+        color: var(--error);
+        font-size: 13px;
+        padding: 10px 14px;
+        margin-bottom: 18px;
+    }
+
+        .server-errors ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+</style>
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeSpend — Log In</title>
+    <link rel="icon" type="image/png" href="@Url.Content("~/Content/img/wallet.png")" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="~/Content/authStyle.css">
+</head>
+<body>
+
+    <div class="auth-wrapper">
+        <div class="brand">
+            <div>
+                <img src="@Url.Content("~/Content/img/wallet.png")" width="75" height="75" />
+            </div>
+            <p class="brand-name">SmartSpend</p>
+            <h1 class="auth-heading">Welcome Back</h1>
+            <p class="auth-subtitle">Log in to continue managing your food budget</p>
+        </div>
+
+        <div class="auth-card">
+            @using (Html.BeginForm("Login", "Account", new { ReturnUrl = ViewBag.ReturnUrl }, FormMethod.Post, new { id = "login-form", novalidate = "novalidate" }))
+            {
+                @Html.AntiForgeryToken()
+
+                if (!ViewData.ModelState.IsValid)
+                {
+                    @Html.ValidationSummary(false, "", new { @class = "server-errors" })
+                }
+
+                <div class="field @(ViewData.ModelState.IsValidField("Email") ? "" : "error")">
+                    <div class="input-group">
+                        @Html.TextBoxFor(m => m.Email, new { id = "login-identifier", placeholder = "Email or Username", required = "required" })
+                    </div>
+                </div>
+
+                <div class="field @(ViewData.ModelState.IsValidField("Password") ? "" : "error")">
+                    <div class="input-group has-toggle">
+                        @Html.PasswordFor(m => m.Password, new { id = "login-password", placeholder = "Password", required = "required" })
+                        <button type="button" class="toggle-visibility" data-target="login-password" aria-label="Show password"></button>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <label class="remember-me">
+                        @Html.CheckBoxFor(m => m.RememberMe, new { id = "remember-me" })
+                        Remember Me
+                    </label>
+                    <a href="#" class="link">Forgot Password?</a>
+                </div>
+
+                <button type="submit" class="btn-primary">Log In</button>
+            }
+
+            <p class="switch-auth">Don't have an account? <a href="@Url.Action("Register", "Account")" class="link">Register</a></p>
+        </div>
+    </div>
+</body>
+</html>
+
+
+@section Scripts {
+    <script>
+       // ---- Icon markup (swapped in/out for show/hide password) ----
+       const EYE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>`;
+       const EYE_OFF_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.6 21.6 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.6 21.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
+       function initPasswordToggles() {
+           document.querySelectorAll('.toggle-visibility').forEach((btn) => {
+               btn.innerHTML = EYE_ICON;
+               btn.addEventListener('click', () => {
+                   const targetId = btn.getAttribute('data-target');
+                   const input = document.getElementById(targetId);
+                   if (!input) return;
+                   const isPassword = input.type === 'password';
+                   input.type = isPassword ? 'text' : 'password';
+                   btn.innerHTML = isPassword ? EYE_OFF_ICON : EYE_ICON;
+               });
+           });
+       }
+
+       document.addEventListener('DOMContentLoaded', initPasswordToggles);
+    </script>
+}

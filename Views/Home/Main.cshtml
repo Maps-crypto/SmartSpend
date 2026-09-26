@@ -1,0 +1,4076 @@
+﻿
+@model SmartSpend.Models.MainViewModel
+@using System.Globalization
+@{
+    ViewBag.Title = "Main";
+    Layout = "~/Views/Shared/mainlay.cshtml";
+
+    // Set by UserPreferencesController.Create right after the onboarding form is saved.
+    // Reading it here consumes it, so a refresh or any later visit is a normal page load.
+    var isOnboarding = TempData["Onboarding"] != null;
+
+    // Product ids the dietary filter hides for this shopper (worked out in HomeController.Main).
+    var dietaryHidden = ViewBag.dietaryHidden as System.Collections.Generic.HashSet<int> ?? new System.Collections.Generic.HashSet<int>();
+
+    // ---- Category jump buttons (FABs) ----
+    // Every category uses the fruit gif for now. When the other gifs are ready, drop them in
+    // ~/Content/img/ and map the category name (as it appears in ScrapedItems.Category) below.
+    var defaultCategoryIcon = "fruit.gif";
+    var categoryIcons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+{
+         { "Fruits", "fruit.gif" },
+         { "Dairy,Eggs & Milk",  "dairy-food.gif" },
+         { "Snacks",  "chips.gif" },
+         { "Meat",  "meat.gif" },
+         { "Rice",  "rice.gif" },
+         { "Vegetables",  "veg.gif" },
+
+    };
+    Func<string, string> iconFor = delegate (string categoryName)
+    {
+        string file;
+        return categoryIcons.TryGetValue(categoryName, out file) ? file : defaultCategoryIcon;
+    };
+
+    // ---- Store logo icons (small badge shown on each product card) ----
+    // Files live in ~/Content/img/. Add more mappings here as new retailers are scraped.
+    var storeLogos = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+{
+         { "Woolworths", "wool.jpg" },
+         { "Shoprite",  "shoprite.jpg" },
+         { "Checkers",  "checkers.jpg" },
+         { "Pick n Pay",  "pnp.jpg" },
+    };
+    Func<string, List<KeyValuePair<string, string>>> storeLogosFor = delegate (string storeField)
+    {
+        var matches = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrWhiteSpace(storeField))
+        {
+            foreach (var kv in storeLogos)
+            {
+                if (storeField.IndexOf(kv.Key, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    matches.Add(kv);
+                }
+            }
+        }
+        return matches;
+    };
+}
+
+<!-- ===== MAIN BODY ===== -->
+<div class="page-body">
+
+    <div class="budget-bar">
+        <div class="budget-bar-top">
+            <span id="budget-summary-text">Set a budget to start tracking</span>
+        </div>
+        <div class="budget-track"><div class="budget-fill" id="header-budget-fill" style="width:0%"></div></div>
+    </div>
+
+    <div class="search-bar">
+        <input type="text" id="product-search" placeholder='Try "2L milk" or "brown bread"' autocomplete="off">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+    </div>
+
+    <div class="chip-row">
+        <button class="chip active" id="chip-sort-price" data-dir="asc">Sort: Price ↑</button>
+        <div class="chip-dropdown" id="store-filter-wrap">
+            <button type="button" class="chip" id="chip-store-filter" aria-haspopup="listbox" aria-expanded="false">
+                <span id="store-filter-label">Store</span>
+                <svg class="chip-caret" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
+            <div class="chip-dropdown-menu" id="store-dropdown-menu" role="listbox" hidden>
+                <button type="button" class="chip-dropdown-item active" data-store="" role="option" aria-selected="true">All Stores</button>
+            </div>
+        </div>
+        <button type="button" class="chip" id="chip-distance" aria-haspopup="dialog" aria-controls="distance-modal"><span id="distance-chip-label">Distance</span> ▾</button>
+        <button type="button" class="@((ViewBag.hasDietaryFilter as bool?) == true ? "chip active" : "chip")" id="chip-dietary" aria-pressed="@((ViewBag.hasDietaryFilter as bool?) == true ? "true" : "false")" title="Hide products that don't suit your dietary needs and allergies"><span id="dietary-chip-label">Dietary</span></button>
+    </div>
+
+    <div id="fav-token" style="display:none">@Html.AntiForgeryToken()</div>
+
+    <div id="card-context-menu" class="card-context-menu" role="menu" hidden>
+        <button type="button" class="card-context-item" id="ctx-dislike-btn" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            I don't want to see this product again
+        </button>
+    </div>
+
+    <!-- ===== AI RECOMMENDATIONS ===== -->
+    <section class="ai-section" id="ai-section" aria-label="Recommended for you">
+        <div class="ai-head">
+            <h2 class="section-title category-title">Recommended for you <span class="ai-tag">AI</span></h2>
+            <button type="button" class="ai-toggle" id="ai-toggle" aria-expanded="true" aria-controls="ai-body">
+                <span id="ai-toggle-label">Hide</span>
+                <svg class="ai-toggle-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"></polyline></svg>
+            </button>
+        </div>
+        <div class="ai-body" id="ai-body">
+            <p class="ai-subtitle">Picked to match your diet, cooking style and shopping habits.</p>
+            <div class="card-grid" id="ai-grid" aria-live="polite">
+                @for (int sk = 0; sk < 5; sk++)
+                {
+                    <div class="ai-skeleton" aria-hidden="true">
+                        <div class="sk-thumb"></div>
+                        <div class="sk-body"><span class="sk-line"></span><span class="sk-line short"></span></div>
+                    </div>
+                }
+            </div>
+            <p class="ai-empty" id="ai-distance-note" hidden>None of these suggestions are from stores within your selected distance. Try reloading.</p>
+        </div>
+    </section>
+
+    @if (Model.Categories.Count == 0)
+    {
+        <p class="catalog-empty">No products available yet. Run the scrapers and refresh this page.</p>
+    }
+
+    <div id="catalog-container">
+        @for (int c = 0; c < Model.Categories.Count; c++)
+        {
+            var cat = Model.Categories[c];
+            <section class="category-section" id="cat-@c" data-category="@cat.Name">
+                <h2 class="section-title category-title">@cat.Name <span class="category-count">@cat.Items.Count</span></h2>
+                <div class="card-grid">
+                    @foreach (var item in cat.Items)
+                    {
+                        var price = item.Price.ToString("0.00", CultureInfo.InvariantCulture);
+                        var retailer = item.Retailer ?? "";
+                        var isFav = Model.FavouriteKeys.Contains(SmartSpend.Models.MainViewModel.FavKey(item.Title, item.Retailer));
+                        var storeLogoMatches = storeLogosFor(retailer);
+                        var isDietaryHidden = dietaryHidden.Contains(item.Id);
+                        <div class="product-card" data-price="@price" data-category="@cat.Name" data-store="@retailer" data-id="@item.Id" data-name="@item.Title" data-dietary-hide="@(isDietaryHidden ? "1" : "0")" style="@(isDietaryHidden ? "display:none" : null)">
+                            <div class="product-thumb">
+                                @if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+                                {
+                                    <img src="@item.ImageUrl" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.style.display='none'" />
+                                }
+                                @if (storeLogoMatches.Count > 0)
+                                {
+                                    <div class="store-badges">
+                                        @foreach (var match in storeLogoMatches)
+                                        {
+                                            <img class="store-badge" src="@Url.Content("~/Content/img/" + match.Value)" alt="@match.Key" title="@match.Key" />
+                                        }
+                                    </div>
+                                }
+                                <button type="button" class="@(isFav ? "fav-btn active" : "fav-btn")" data-id="@item.Id" aria-pressed="@(isFav ? "true" : "false")" aria-label="Favourite @item.Title">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z" /></svg>
+                                </button>
+                                <button class="add-btn" data-name="@item.Title" data-price="@price" data-store="@retailer">+</button>
+                            </div>
+                            <div class="product-info">
+                                <span class="product-name">@item.Title</span>
+                                <span class="product-price">@("R" + price) <span class="store">@retailer</span></span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+
+        <p class="catalog-empty" id="search-empty" style="display:none">No products match your search.</p>
+    </div>
+</div>
+
+<nav class="category-fabs" aria-label="Quick navigation">
+    @for (int c = 0; c < Model.Categories.Count; c++)
+    {
+        var fabName = Model.Categories[c].Name;
+        <button type="button" class="category-fab" data-target="cat-@c" title="@fabName" aria-label="Jump to @fabName">
+            <img src="@Url.Content("~/Content/img/" + iconFor(fabName))" alt="" />
+        </button>
+    }
+
+    @* Bottom-most FAB: appears once the user has scrolled down the page *@
+    <button type="button" class="category-fab back-to-top" id="back-to-top" title="Back to top" aria-label="Back to top" aria-hidden="true" tabindex="-1">
+        <img src="@Url.Content("~/Content/img/up-arrow.png")" alt="" />
+    </button>
+</nav>
+
+<!-- ===== DISTANCE FILTER MODAL ===== -->
+<div class="dist-modal" id="distance-modal" hidden>
+    <div class="dist-backdrop" id="dist-backdrop"></div>
+    <div class="dist-dialog" role="dialog" aria-modal="true" aria-labelledby="dist-title">
+        <div class="dist-head">
+            <div class="dist-head-text">
+                <h2 id="dist-title">Filter by distance</h2>
+                <p class="dist-sub" id="dist-address"></p>
+            </div>
+            <button type="button" class="dist-x" id="dist-close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="dist-body">
+            <div class="dist-map-wrap">
+                <div id="dist-map" class="dist-map" role="application" aria-label="Map of nearby stores"></div>
+                <div class="dist-map-msg" id="dist-map-msg" role="status" aria-live="polite" hidden></div>
+            </div>
+
+            <div class="dist-radius" role="radiogroup" aria-label="Distance from your address">
+                <button type="button" class="dist-radius-btn" role="radio" aria-checked="false" data-km="1">1 km</button>
+                <button type="button" class="dist-radius-btn" role="radio" aria-checked="false" data-km="2">2 km</button>
+                <button type="button" class="dist-radius-btn" role="radio" aria-checked="false" data-km="5">5 km</button>
+                <button type="button" class="dist-radius-btn" role="radio" aria-checked="false" data-km="10">10 km</button>
+            </div>
+
+            <h3 class="dist-within" id="dist-within">Within 10 km</h3>
+            <ul class="dist-retailers" id="dist-retailers"></ul>
+            <p class="dist-note" id="dist-note" hidden></p>
+        </div>
+
+        <div class="dist-foot">
+            <button type="button" class="dist-btn dist-btn-link" id="dist-clear" hidden>Clear filter</button>
+            <span class="dist-spacer"></span>
+            <button type="button" class="dist-btn" id="dist-cancel">Cancel</button>
+            <button type="button" class="dist-btn dist-btn-primary" id="dist-apply" disabled>Apply</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== STORE BRANCH MODAL (shopping list -> choose a branch, see route + estimated travel costs) ===== -->
+<div class="dist-modal" id="branch-modal" hidden>
+    <div class="dist-backdrop" id="branch-backdrop"></div>
+    <div class="dist-dialog" role="dialog" aria-modal="true" aria-labelledby="branch-title">
+        <div class="dist-head">
+            <div class="dist-head-text">
+                <h2 id="branch-title">Choose a branch</h2>
+                <p class="dist-sub" id="branch-sub"></p>
+            </div>
+            <button type="button" class="dist-x" id="branch-close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="dist-body">
+            <label class="branch-origin-row" for="branch-origin">
+                <span>Starting point</span>
+                <select id="branch-origin" class="branch-origin-select"></select>
+            </label>
+
+            <div class="dist-map-wrap">
+                <div id="branch-map" class="dist-map" role="application" aria-label="Map of nearby branches and the route to the selected one"></div>
+                <div class="dist-map-msg" id="branch-map-msg" role="status" aria-live="polite" hidden></div>
+            </div>
+
+            <div class="branch-summary" id="branch-summary" aria-live="polite"></div>
+
+            <h3 class="dist-within">Nearby branches</h3>
+            <ul class="branch-list" id="branch-list" role="radiogroup" aria-label="Nearby branches"></ul>
+        </div>
+
+        <div class="dist-foot">
+            <span class="dist-spacer"></span>
+            <button type="button" class="dist-btn" id="branch-cancel">Cancel</button>
+            <button type="button" class="dist-btn dist-btn-primary" id="branch-confirm" disabled>Use this branch</button>
+        </div>
+    </div>
+</div>
+
+@section scripts{
+
+
+    <script>
+        // ---------------- Store metadata (address + demo distance for Taxi/Bus fare band) ----------------
+        const STORES = {
+            'Checkers': { address: 'Overport City, Durban', distanceKm: 3 },
+            'Woolworths': { address: 'Westville Mall, Durban', distanceKm: 9 },
+            'Shoprite': { address: 'Pavilion Mall, Durban', distanceKm: 14 },
+            'Pick n Pay': { address: 'Musgrave Centre, Durban', distanceKm: 2 },
+            "Food Lover's": { address: 'Kloof Street, Durban', distanceKm: 20 },
+        };
+
+        const DELIVERY_FEE = 37;
+        function taxiFareForDistance(km) {
+            if (km <= 5) return 12;
+            if (km <= 15) return 18;
+            if (km <= 25) return 25;
+            return 35;
+        }
+
+        const TOGGLE_FAV_URL = '@Url.Action("ToggleFavourite", "Home")';
+        const DISLIKE_URL = '@Url.Action("DislikeProduct", "Home")';
+        const DOWNLOAD_PDF_URL = '@Url.Action("DownloadShoppingListPdf", "Home")';
+        const AI_URL = '@Url.Action("GetAIRecommendations", "Home")';
+        const HAS_DIETARY = @((ViewBag.hasDietaryFilter as bool?) == true ? "true" : "false");   // shopper has dietary needs / allergies saved
+        const IMG_BASE = '@Url.Content("~/Content/img/")';
+        const STORE_LOGOS = @Html.Raw(Json.Encode(storeLogos));
+        const ONBOARDING = @(isOnboarding ? "true" : "false");   // true only on the first landing after setting preferences
+
+        // Scraped product names come from external sites, so escape before injecting into innerHTML.
+        function esc(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[ch]));
+        }
+
+        // ---------------- App state ----------------
+        // The shopping list starts empty; items are added from the product cards.
+        let itemCounter = 0;
+        const state = {
+            // Onboarding starts with no budget so the empty "Set Your Budget" box is shown.
+            budget: ONBOARDING ? 0 : 450,
+            nudgeBudget: ONBOARDING,   // true = highlight the budget input until the user sets one
+            items: [],
+            transport: {},
+            lastThresholdShown: 0,
+        };
+
+        // ---------------- Persistence (survive navigating to Favourites/History/etc.) ----------------
+        // Everything above is plain in-memory JS, so without this the budget and shopping list
+        // reset to their defaults every time the user leaves this page and comes back. Scoped
+        // per signed-in user so a shared browser doesn't mix up different accounts' carts.
+        const CART_STORAGE_KEY = 'safespend_cart_' + @Html.Raw(Json.Encode((string)(ViewBag.email ?? "anon")));
+
+        function saveCartState() {
+            try {
+                localStorage.setItem(CART_STORAGE_KEY, JSON.stringify({
+                    budget: state.budget,
+                    items: state.items,
+                    transport: state.transport,
+                    itemCounter: itemCounter,
+                    lastThresholdShown: state.lastThresholdShown
+                }));
+            } catch (e) { /* private browsing / quota / storage unavailable - cart just won't persist */ }
+        }
+
+        function loadCartState() {
+            try {
+                const raw = localStorage.getItem(CART_STORAGE_KEY);
+                if (!raw) return;
+                const saved = JSON.parse(raw);
+                if (!saved) return;
+
+                if (typeof saved.budget === 'number' && saved.budget > 0) {
+                    state.budget = saved.budget;
+                    state.nudgeBudget = false;
+                }
+                if (Array.isArray(saved.items)) state.items = saved.items;
+                if (saved.transport && typeof saved.transport === 'object') state.transport = saved.transport;
+                if (typeof saved.itemCounter === 'number') itemCounter = saved.itemCounter;
+                if (typeof saved.lastThresholdShown === 'number') state.lastThresholdShown = saved.lastThresholdShown;
+            } catch (e) { /* corrupted or unavailable storage - fall back to the defaults above */ }
+        }
+
+        // Restore before the first render. Skip on a fresh onboarding landing, which always
+        // wants the empty "Set Your Budget" box regardless of what an earlier session saved.
+        if (!ONBOARDING) loadCartState();
+
+        // ---------------- Derived calculations ----------------
+        function groupItemsByStore() {
+            const groups = {};
+            state.items.forEach((item) => {
+                if (!groups[item.store]) groups[item.store] = [];
+                groups[item.store].push(item);
+            });
+            return groups;
+        }
+
+        function transportCost(store) {
+            const method = state.transport[store];
+            if (!method || method === 'walk') return 0;
+            if (method === 'delivery') return DELIVERY_FEE;
+            // Taxi / Uber-Bolt: estimated from the Google road-route distance to the selected branch
+            // (R11/km and R12/km). 0 until that route is known - see TravelPlanner.
+            if (method === 'taxi' || method === 'rideshare') {
+                return window.TravelPlanner ? TravelPlanner.cost(store, method) : 0;
+            }
+            return 0;
+        }
+
+        function storeSubtotal(items) {
+            return items.reduce((sum, i) => sum + i.price * (i.qty || 1), 0);
+        }
+
+        function totalTrueCost() {
+            const groups = groupItemsByStore();
+            let total = 0;
+            Object.keys(groups).forEach((store) => {
+                total += storeSubtotal(groups[store]) + transportCost(store);
+            });
+            return total;
+        }
+
+        // ---------------- PDF export payload ----------------
+        // Builds a ShoppingListPdfModel-shaped object from the current cart state so it
+        // can be posted straight to HomeController.DownloadShoppingListPdf.
+        function transportLabel(method) {
+            if (method === 'walk') return 'Walk';
+            if (method === 'delivery') return 'Delivery';
+            if (method === 'taxi') return 'Taxi (estimate)';
+            if (method === 'rideshare') return 'Uber/Bolt (estimate)';
+            return '';
+        }
+
+        function buildPdfPayload() {
+            const groups = groupItemsByStore();
+            const spent = totalTrueCost();
+
+            const stores = Object.keys(groups).map((store) => {
+                const items = groups[store];
+                const subtotal = storeSubtotal(items);
+                const cost = transportCost(store);
+
+                return {
+                    StoreName: store,
+                    Address: (window.TravelPlanner && TravelPlanner.branchText(store)) || (STORES[store] && STORES[store].address) || '',
+                    Items: items.map((item) => ({
+                        Name: item.name,
+                        Price: item.price,
+                        Quantity: item.qty || 1,
+                        LineTotal: item.price * (item.qty || 1)
+                    })),
+                    Subtotal: subtotal,
+                    TransportMethod: transportLabel(state.transport[store]),
+                    TransportCost: cost,
+                    TrueCost: subtotal + cost
+                };
+            });
+
+            return {
+                Budget: state.budget || 0,
+                Stores: stores,
+                TotalTrueCost: spent,
+                RemainingBudget: (state.budget || 0) - spent
+            };
+        }
+
+        // Posts the current list to the server, streams the returned PDF back as a
+        // blob, and triggers a save-as download using the filename the server sent.
+        function downloadShoppingListPdf(btn) {
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = 'Preparing PDF…';
+
+            fetch(DOWNLOAD_PDF_URL, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify(buildPdfPayload())
+            })
+                .then((res) => {
+                    if (!res.ok) throw new Error('Request failed: ' + res.status);
+                    const disposition = res.headers.get('Content-Disposition') || '';
+                    const match = disposition.match(/filename="?([^"]+)"?/);
+                    const filename = match ? match[1] : 'SmartSpend-Shopping-List.pdf';
+                    return res.blob().then((blob) => ({ blob, filename }));
+                })
+                .then(({ blob, filename }) => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                    showToast('Shopping list downloaded', 'success');
+                })
+                .catch(() => showToast('Could not generate the PDF. Please try again.', 'over'))
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                });
+        }
+
+        // ---------------- Live search + store filter ----------------
+        // Purely client-side: every product card is already in the DOM, so we just
+        // show/hide cards as the user types or picks a store, then hide any
+        // category section left empty.
+        function applyFilters() {
+            const searchInput = document.getElementById('product-search');
+            const query = (searchInput ? searchInput.value : '').trim().toLowerCase();
+            const storeFilter = catalogView.storeFilter;
+
+            // While the user is searching, the AI section steps out of the way.
+            // It comes back when the search box is cleared.
+            const aiSection = document.getElementById('ai-section');
+            if (aiSection) aiSection.classList.toggle('is-search-hidden', query !== '');
+
+            const sections = document.querySelectorAll('.category-section');
+            let anyVisible = false;
+
+            sections.forEach((section) => {
+                let visibleInSection = 0;
+                const cards = section.querySelectorAll('.product-card');
+
+                cards.forEach((card) => {
+                    const name = (card.querySelector('.product-name')?.textContent || '').toLowerCase();
+                    const store = card.getAttribute('data-store') || '';
+                    const matchesQuery = query === '' || name.includes(query) || store.toLowerCase().includes(query);
+                    const matchesStore = !storeFilter || store === storeFilter;
+                    const matchesDistance = distanceAllows(store);
+                    const matchesDietary = dietaryAllows(card);
+                    const matches = matchesQuery && matchesStore && matchesDistance && matchesDietary;
+                    card.style.display = matches ? '' : 'none';
+                    if (matches) visibleInSection++;
+                });
+
+                section.style.display = visibleInSection > 0 ? '' : 'none';
+
+                const countEl = section.querySelector('.category-count');
+                if (countEl) countEl.textContent = visibleInSection;
+
+                if (visibleInSection > 0) anyVisible = true;
+            });
+
+            const emptyMsg = document.getElementById('search-empty');
+            if (emptyMsg) {
+                emptyMsg.textContent = emptyCatalogMessage();
+                emptyMsg.style.display = (!anyVisible && sections.length > 0) ? '' : 'none';
+            }
+
+            applyFiltersToAI();
+        }
+
+        // ---------------- Sort + store dropdown (Sort: Price, Store chips) ----------------
+        // Cards are already in the DOM from the server; we just move the same DOM
+        // nodes around into new sections rather than re-rendering from scratch, so
+        // event delegation and image loading state are untouched.
+        let catalogItems = [];       // { el, name, price, store, category }
+        let categoryOrder = [];      // original server-rendered category order, kept stable across sorts
+        const catalogView = {
+            sortDir: 'asc', storeFilter: '', distanceKm: null, eligibleRetailers: null,   // storeFilter '' = All Stores; eligibleRetailers null = no distance filter
+            dietaryOn: HAS_DIETARY   // ON by default when dietary needs / allergies are saved; the shopper can switch it off
+        };
+
+        // ---------------- Dietary filter ----------------
+        // The server already decided which products conflict with this shopper's needs (from the tags
+        // saved after scraping) and marked those cards data-dietary-hide="1". Here the chip only
+        // switches that hiding on or off - no waiting, no requests.
+        function dietaryAllows(card) {
+            return !catalogView.dietaryOn || card.getAttribute('data-dietary-hide') !== '1';
+        }
+
+        function updateDietaryChip() {
+            const chip = document.getElementById('chip-dietary');
+            const label = document.getElementById('dietary-chip-label');
+            if (!chip || !label) return;
+
+            chip.classList.toggle('active', catalogView.dietaryOn);
+            chip.setAttribute('aria-pressed', catalogView.dietaryOn ? 'true' : 'false');
+
+            let text = 'Dietary';
+            if (catalogView.dietaryOn) {
+                const hiddenNow = catalogItems.filter((i) => i.el.getAttribute('data-dietary-hide') === '1').length;
+                text = 'Dietary: ' + hiddenNow + ' hidden';
+            }
+            label.textContent = text;
+        }
+
+        function initDietaryFilter() {
+            const chip = document.getElementById('chip-dietary');
+            if (!chip) return;
+
+            chip.addEventListener('click', () => {
+                if (!HAS_DIETARY) {
+                    showToast('You have no dietary needs or allergies saved. Update them in Preferences.', 'info');
+                    return;
+                }
+                catalogView.dietaryOn = !catalogView.dietaryOn;
+                updateDietaryChip();
+                applyFilters();
+                showToast(catalogView.dietaryOn ? 'Dietary filter on' : 'Dietary filter off - showing all products', 'info');
+            });
+
+            updateDietaryChip();
+        }
+
+        // ---------------- Distance filter helpers ----------------
+        // Products carry a retailer name, not a branch. A retailer is "eligible" when at least
+        // one of its branches is inside the chosen radius (worked out in the Distance modal).
+        // While a distance filter is active, products from any retailer outside this list are
+        // hidden too, because we cannot confirm a branch of theirs is nearby.
+        const RETAILERS = [
+            { name: 'Woolworths', keyword: 'Woolworths', match: ['woolworths'] },
+            { name: 'Checkers', keyword: 'Checkers', match: ['checkers'] },
+            { name: 'Shoprite', keyword: 'Shoprite', match: ['shoprite'] },
+            { name: 'Pick n Pay', keyword: 'Pick n Pay', match: ['picknpay', 'pnp'] }
+        ];
+        const retailerCache = new Map();
+
+        function normaliseName(value) {
+            return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        }
+
+        // Maps a product's store text ("Pick n Pay", "Woolworths" ...) to a supported retailer name, or null.
+        function retailerOf(storeField) {
+            const key = String(storeField || '');
+            if (retailerCache.has(key)) return retailerCache.get(key);
+            const norm = normaliseName(key);
+            const found = RETAILERS.find((r) => r.match.some((m) => norm.indexOf(m) >= 0));
+            const name = found ? found.name : null;
+            retailerCache.set(key, name);
+            return name;
+        }
+
+        function distanceAllows(storeField) {
+            const eligible = catalogView.eligibleRetailers;
+            if (!eligible) return true;
+            const name = retailerOf(storeField);
+            return name !== null && eligible.has(name);
+        }
+
+        function emptyCatalogMessage() {
+            const eligible = catalogView.eligibleRetailers;
+            const km = catalogView.distanceKm;
+            if (eligible) {
+                if (eligible.size === 0) {
+                    return 'No supported store has a branch within ' + km + ' km of your address. Try a larger distance.';
+                }
+                if (catalogView.storeFilter && !distanceAllows(catalogView.storeFilter)) {
+                    return catalogView.storeFilter + ' has no branch within ' + km + ' km of your address.';
+                }
+            }
+            return 'No products match your search.';
+        }
+
+        // The "Recommended for you" cards are not part of the catalogue sections, so the
+        // store and distance filters are applied to them separately here (price sort is
+        // applied separately too, via sortAIGrid).
+        function applyFiltersToAI() {
+            const grid = document.getElementById('ai-grid');
+            if (!grid) return;
+            const storeFilter = catalogView.storeFilter;
+            let total = 0, shown = 0;
+
+            grid.querySelectorAll('.product-card').forEach((card) => {
+                total++;
+                const store = card.getAttribute('data-store') || '';
+                const matchesStore = !storeFilter || store === storeFilter;
+                const matchesDistance = distanceAllows(store);
+                const ok = matchesStore && matchesDistance;
+                card.style.display = ok ? '' : 'none';
+                if (ok) shown++;
+            });
+
+            const note = document.getElementById('ai-distance-note');
+            if (note) {
+                const shouldShow = total > 0 && shown === 0;
+                note.hidden = !shouldShow;
+                if (shouldShow) {
+                    note.textContent = storeFilter && catalogView.eligibleRetailers
+                        ? 'None of these suggestions match your selected store and distance filters.'
+                        : storeFilter
+                            ? 'None of these suggestions are from ' + storeFilter + '. Try reloading.'
+                            : 'None of these suggestions are from stores within your selected distance. Try reloading.';
+                }
+            }
+        }
+
+        // Re-orders the AI grid's cards by price, matching the catalogue's current sort
+        // direction. Non-card elements (the reload button / empty message) are kept last.
+        function sortAIGrid() {
+            const grid = document.getElementById('ai-grid');
+            if (!grid) return;
+            const cards = Array.from(grid.querySelectorAll('.product-card'));
+            if (cards.length < 2) return;
+            const trailing = Array.from(grid.children).filter((el) => !el.classList.contains('product-card'));
+
+            cards.sort((a, b) => {
+                const pa = parseFloat(a.getAttribute('data-price') || '0');
+                const pb = parseFloat(b.getAttribute('data-price') || '0');
+                const diff = catalogView.sortDir === 'asc' ? pa - pb : pb - pa;
+                if (diff !== 0) return diff;
+                return (a.getAttribute('data-name') || '').localeCompare(b.getAttribute('data-name') || '');
+            });
+
+            cards.forEach((card) => grid.appendChild(card));
+            trailing.forEach((el) => grid.appendChild(el));
+        }
+
+        function initCatalog() {
+            const container = document.getElementById('catalog-container');
+            if (!container) return;
+
+            const sections = Array.from(container.querySelectorAll('.category-section'));
+            categoryOrder = sections.map((s) => s.dataset.category || 'Other');
+
+            catalogItems = sections.flatMap((section) => {
+                const category = section.dataset.category || 'Other';
+                return Array.from(section.querySelectorAll('.product-card')).map((card) => ({
+                    el: card,
+                    name: card.querySelector('.product-name')?.textContent || '',
+                    store: card.getAttribute('data-store') || 'Other',
+                    price: parseFloat(card.getAttribute('data-price') || '0'),
+                    category
+                }));
+            });
+
+            populateStoreDropdown();
+            renderCatalog();
+        }
+
+        // Builds the store dropdown's option list from whatever stores are actually
+        // in the catalogue, so it never drifts out of sync with the scraped data.
+        function populateStoreDropdown() {
+            const menu = document.getElementById('store-dropdown-menu');
+            if (!menu) return;
+
+            const stores = Array.from(new Set(catalogItems.map((item) => item.store).filter(Boolean)))
+                .sort((a, b) => a.localeCompare(b));
+
+            menu.innerHTML = '';
+
+            const allBtn = document.createElement('button');
+            allBtn.type = 'button';
+            allBtn.className = 'chip-dropdown-item active';
+            allBtn.setAttribute('data-store', '');
+            allBtn.setAttribute('role', 'option');
+            allBtn.setAttribute('aria-selected', 'true');
+            allBtn.textContent = 'All Stores';
+            menu.appendChild(allBtn);
+
+            stores.forEach((store) => {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'chip-dropdown-item';
+                item.setAttribute('data-store', store);
+                item.setAttribute('role', 'option');
+                item.setAttribute('aria-selected', 'false');
+                item.textContent = store;
+                menu.appendChild(item);
+            });
+        }
+
+        function renderCatalog() {
+            const container = document.getElementById('catalog-container');
+            if (!container || catalogItems.length === 0) return;
+
+            const sorted = [...catalogItems].sort((a, b) => {
+                const diff = catalogView.sortDir === 'asc' ? a.price - b.price : b.price - a.price;
+                return diff !== 0 ? diff : a.name.localeCompare(b.name);
+            });
+
+            const groups = new Map();
+            sorted.forEach((item) => {
+                const key = item.category || 'Other';
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(item);
+            });
+
+            // Keeps the server's original category order regardless of sort direction.
+            const groupKeys = categoryOrder.filter((name) => groups.has(name));
+            groups.forEach((_, key) => { if (!groupKeys.includes(key)) groupKeys.push(key); });
+
+            const emptyMsg = document.getElementById('search-empty');
+
+            container.replaceChildren();
+            groupKeys.forEach((key, idx) => {
+                const items = groups.get(key);
+
+                const section = document.createElement('section');
+                section.className = 'category-section';
+                section.id = 'cat-' + idx;
+                section.dataset.category = key;
+
+                const title = document.createElement('h2');
+                title.className = 'section-title category-title';
+                title.innerHTML = esc(key) + ' <span class="category-count">' + items.length + '</span>';
+
+                const grid = document.createElement('div');
+                grid.className = 'card-grid';
+                items.forEach((item) => grid.appendChild(item.el));
+
+                section.appendChild(title);
+                section.appendChild(grid);
+                container.appendChild(section);
+            });
+
+            if (emptyMsg) container.appendChild(emptyMsg);
+
+            // Re-apply the current search text and store filter to the freshly built cards.
+            applyFilters();
+        }
+
+        // ---------------- Toast ----------------
+        let toastTimer = null;
+        function showToast(message, type) {
+            const method = type === 'over' ? 'error' : type === 'warn' ? 'warning' : type === 'success' ? 'success' : 'info';
+            toastr[method](message, '', { timeOut: type === 'success' ? 2500 : 9000 });
+        }
+
+        function checkBudgetThresholds() {
+            if (!state.budget || state.budget <= 0) return;
+            const spent = totalTrueCost();
+            const pct = (spent / state.budget) * 100;
+            if (pct >= 100 && state.lastThresholdShown < 100) {
+                showToast("You've gone over your food budget.", 'over');
+                state.lastThresholdShown = 100;
+                saveCartState();
+            } else if (pct >= 80 && pct < 100 && state.lastThresholdShown < 80) {
+                showToast("You've used 80% of your food budget.", 'warn');
+                state.lastThresholdShown = 80;
+                saveCartState();
+            } else if (pct < 80 && state.lastThresholdShown !== 0) {
+                state.lastThresholdShown = 0;
+                saveCartState();
+            }
+        }
+
+        // ---------------- Header budget bar ----------------
+        function renderHeaderBudget() {
+            const fill = document.getElementById('header-budget-fill');
+            const label = document.getElementById('budget-summary-text');
+            const badge = document.getElementById('cart-badge');
+
+            badge.textContent = state.items.length;
+
+            // If the drawer is closed before a budget is entered, the cart button keeps pulsing.
+            const cartBtn = document.getElementById('cart-toggle');
+            if (cartBtn) cartBtn.classList.toggle('nudge-pulse', !!state.nudgeBudget && !state.budget);
+
+            if (!state.budget) {
+                label.textContent = 'Set a budget to start tracking';
+                fill.style.width = '0%';
+                fill.classList.remove('warn', 'over');
+                return;
+            }
+            const spent = totalTrueCost();
+            const remaining = state.budget - spent;
+            const pct = Math.min((spent / state.budget) * 100, 100);
+            label.textContent = `R${remaining.toFixed(0)} remaining of R${state.budget.toFixed(0)}`;
+            fill.style.width = pct + '%';
+            fill.classList.remove('warn', 'over');
+            if (spent >= state.budget) fill.classList.add('over');
+            else if (spent / state.budget >= 0.8) fill.classList.add('warn');
+        }
+
+        // ---------------- Cart drawer ----------------
+        function iconBasket() {
+            return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>
+      </svg>`;
+        }
+        function iconTrash() {
+            return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+      </svg>`;
+        }
+        function iconPencil() {
+            return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+        }
+
+        function renderCartDrawer() {
+            const body = document.getElementById('cart-body');
+            let html = '';
+
+            // ---- Budget section ----
+            if (!state.budget) {
+                const nudge = !!state.nudgeBudget;
+                html += `
+          <div class="budget-set-box${nudge ? ' nudge' : ''}">
+            <p>Set Your Budget</p>
+            ${nudge ? `<p class="budget-nudge-hint" role="status">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+              Welcome! Start here: how much do you want to spend on food?
+            </p>` : ''}
+            <div class="budget-set-row">
+              <span>R</span>
+              <input type="number" id="budget-input" placeholder="${nudge ? 'e.g. 450' : '0'}" min="1" inputmode="numeric">
+            </div>
+            <button class="btn-primary" id="start-list-btn">Start Shopping List</button>
+          </div>`;
+            } else {
+                const spent = totalTrueCost();
+                const remaining = state.budget - spent;
+                const pct = Math.min((spent / state.budget) * 100, 100);
+                html += `
+          <div class="budget-pill-row">
+            <button class="budget-pill" id="budget-pill">${iconPencil()} Budget: R${state.budget.toFixed(0)}</button>
+            <div class="budget-remaining">
+              <div class="amount">R${remaining.toFixed(2)}</div>
+              <div class="label">Remaining Budget</div>
+            </div>
+          </div>
+          <div class="budget-set-row" id="budget-edit-row" style="display:none;">
+            <span>R</span>
+            <input type="number" id="budget-input" value="${state.budget}" min="1">
+            <button class="btn-primary" id="budget-save-btn" style="width:auto;padding:8px 16px;">Save</button>
+          </div>
+          <div class="budget-track"><div class="budget-fill ${pct >= 100 ? 'over' : pct >= 80 ? 'warn' : ''}" style="width:${pct}%"></div></div>
+          <div class="budget-meta-row"><span>R${spent.toFixed(0)} spent</span><span>${state.budget > 0 ? Math.round((spent / state.budget) * 100) : 0}% of budget used</span></div>`;
+            }
+
+            // ---- List content ----
+            if (state.items.length === 0) {
+                html += `
+          <div class="empty-list">
+            <div class="icon-circle">${iconBasket()}</div>
+            <h3>Your list is empty</h3>
+            <p>Add items from stores to see them here and track your spending.</p>
+          </div>`;
+            } else {
+                const groups = groupItemsByStore();
+                Object.keys(groups).forEach((store) => {
+                    const items = groups[store];
+                    const subtotal = storeSubtotal(items);
+                    const method = state.transport[store];
+                    const cost = transportCost(store);
+                    const trueCost = subtotal + cost;
+
+                    html += `<div class="store-group">
+            <div class="store-group-name">${esc(store.toUpperCase())}</div>`;
+
+                    items.forEach((item) => {
+                        const qty = item.qty || 1;
+                        const lineTotal = item.price * qty;
+                        html += `<div class="line-item">
+              <div>
+                <div class="name">${esc(item.name)}</div>
+                <div class="price">R${item.price.toFixed(2)} each</div>
+              </div>
+              <div class="qty-stepper">
+                <button type="button" data-qty-minus="${item.id}" aria-label="Decrease quantity of ${esc(item.name)}">−</button>
+                <span class="qty-value" aria-live="polite">${qty}</span>
+                <button type="button" data-qty-plus="${item.id}" aria-label="Increase quantity of ${esc(item.name)}">+</button>
+              </div>
+              <div class="line-total">R${lineTotal.toFixed(2)}</div>
+              <button data-remove="${item.id}" aria-label="Remove item">${iconTrash()}</button>
+            </div>`;
+                    });
+
+                    html += `<div class="subtotal-row"><span>Subtotal</span><span>R${subtotal.toFixed(2)}</span></div>
+            ${window.TravelPlanner ? TravelPlanner.travelHtml(store, method) : ''}
+            <div class="truecost-row"><span>True Cost</span><span>R${trueCost.toFixed(2)}</span></div>
+          </div>`;
+                });
+            }
+
+            body.innerHTML = html;
+
+            // Branch suggestions / routes are only requested while the drawer is open (keeps Google API usage low).
+            if (window.TravelPlanner && document.getElementById('cart-drawer').classList.contains('open')) {
+                setTimeout(() => TravelPlanner.prepareAll(), 0);
+            }
+
+            // ---- Footer ----
+            const footer = document.getElementById('cart-footer');
+            if (state.budget && state.items.length > 0) {
+                const spent = totalTrueCost();
+                const remaining = state.budget - spent;
+                footer.innerHTML = `
+          <div class="summary-row total"><span>Total True Cost</span><span class="amount green">R${spent.toFixed(2)}</span></div>
+          <div class="summary-row"><span>Remaining Budget</span><span class="amount">R${remaining.toFixed(2)}</span></div>
+          <button class="btn-primary" id="export-btn" style="display:flex;align-items:center;justify-content:center;gap:8px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/>
+            </svg>
+            Save &amp; Download Shopping List (PDF)
+          </button>`;
+                footer.style.display = 'block';
+            } else {
+                footer.innerHTML = `<p style="text-align:center;color:var(--text-muted);font-size:12.5px;margin:0;">SafeSpend • GROUP 3</p>`;
+                footer.style.display = 'block';
+            }
+        }
+
+        function renderAll() {
+            renderHeaderBudget();
+            renderCartDrawer();
+        }
+
+        // ---------------- Actions ----------------
+        function addToList(name, price, store) {
+            // Same product, same price, same store as something already on the list?
+            // Bump its quantity instead of adding a duplicate row.
+            const existing = state.items.find((i) => i.name === name && i.store === store && i.price === price);
+            if (existing) {
+                existing.qty = (existing.qty || 1) + 1;
+            } else {
+                itemCounter += 1;
+                state.items.push({ id: 'i' + itemCounter, name, price, store, qty: 1 });
+            }
+            saveCartState();
+            renderAll();
+            checkBudgetThresholds();
+            showToast(`Added "${name}" to your list`, 'success');
+        }
+
+        // delta is +1 or -1. Quantity dropping to 0 removes the item entirely.
+        function changeQty(itemId, delta) {
+            const item = state.items.find((i) => i.id === itemId);
+            if (!item) return;
+            item.qty = (item.qty || 1) + delta;
+            if (item.qty <= 0) {
+                state.items = state.items.filter((i) => i.id !== itemId);
+            }
+            const groups = groupItemsByStore();
+            Object.keys(state.transport).forEach((store) => {
+                if (!groups[store]) delete state.transport[store];
+            });
+            if (window.TravelPlanner) TravelPlanner.prune(Object.keys(groups));
+            saveCartState();
+            renderAll();
+            checkBudgetThresholds();
+        }
+
+        function removeItem(itemId) {
+            state.items = state.items.filter((i) => i.id !== itemId);
+            const groups = groupItemsByStore();
+            Object.keys(state.transport).forEach((store) => {
+                if (!groups[store]) delete state.transport[store];
+            });
+            // A store group that leaves the list also loses its selected branch (same lifecycle as its transport choice).
+            if (window.TravelPlanner) TravelPlanner.prune(Object.keys(groups));
+            saveCartState();
+            renderAll();
+            checkBudgetThresholds();
+        }
+
+        function setTransport(store, method) {
+            state.transport[store] = method;
+            saveCartState();
+            renderAll();
+            showToast('True Cost updated');
+        }
+
+        function setBudget(value) {
+            const val = parseFloat(value);
+            if (!isNaN(val) && val > 0) {
+                const finishedOnboarding = state.nudgeBudget;
+                state.budget = val;
+                state.nudgeBudget = false;
+                state.lastThresholdShown = 0;
+                saveCartState();
+                renderAll();
+                checkBudgetThresholds();
+
+                // Onboarding is done: get the drawer out of the way so they can start browsing.
+                if (finishedOnboarding) {
+                    closeDrawers();
+                    showToast(`Budget set to R${val.toFixed(0)}. Tap + on any product to start your list.`, 'success');
+                }
+            } else if (state.nudgeBudget) {
+                // Empty / zero / invalid while onboarding: say why nothing happened.
+                showToast('Enter a budget greater than 0 to get started.', 'warn');
+                const input = document.getElementById('budget-input');
+                if (input) input.focus();
+            }
+        }
+
+        // ---------------- Favourites ----------------
+        function toggleFavourite(btn) {
+            const tokenInput = document.querySelector('#fav-token input[name="__RequestVerificationToken"]');
+            btn.disabled = true;
+
+            fetch(TOGGLE_FAV_URL, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: 'id=' + encodeURIComponent(btn.getAttribute('data-id')) +
+                      '&__RequestVerificationToken=' + encodeURIComponent(tokenInput ? tokenInput.value : '')
+            })
+                .then((res) => res.json())
+                .then((data) => {
+                    if (!data.success) {
+                        showToast(data.message || 'Could not update favourites.', 'over');
+                        return;
+                    }
+                    // The same product can appear in the AI section and the catalogue - keep both hearts in sync.
+                    document.querySelectorAll('.fav-btn[data-id="' + btn.getAttribute('data-id') + '"]').forEach((b) => {
+                        b.classList.toggle('active', data.favourited);
+                        b.setAttribute('aria-pressed', data.favourited ? 'true' : 'false');
+                    });
+                    showToast(data.favourited ? 'Added to favourites' : 'Removed from favourites', 'success');
+                })
+                .catch(() => showToast('Something went wrong. Please try again.', 'over'))
+                .finally(() => { btn.disabled = false; });
+        }
+
+        // ---------------- Card right-click context menu ----------------
+        // "I don't want to see this product again" - a right-click option instead of
+        // one more always-visible button crowding the card.
+        let contextMenuCard = null;
+
+        function openCardContextMenu(x, y, card) {
+            const menu = document.getElementById('card-context-menu');
+            if (!menu) return;
+            contextMenuCard = card;
+
+            // Keep the menu on-screen near the click point.
+            menu.hidden = false;
+            const menuRect = menu.getBoundingClientRect();
+            const maxX = window.innerWidth - menuRect.width - 8;
+            const maxY = window.innerHeight - menuRect.height - 8;
+            menu.style.left = Math.max(8, Math.min(x, maxX)) + 'px';
+            menu.style.top = Math.max(8, Math.min(y, maxY)) + 'px';
+        }
+
+        function closeCardContextMenu() {
+            const menu = document.getElementById('card-context-menu');
+            if (menu) menu.hidden = true;
+            contextMenuCard = null;
+        }
+
+        function dislikeProduct(card) {
+            const tokenInput = document.querySelector('#fav-token input[name="__RequestVerificationToken"]');
+            const id = card.getAttribute('data-id');
+            const name = card.getAttribute('data-name') || card.querySelector('.product-name')?.textContent || 'this product';
+
+            fetch(DISLIKE_URL, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: 'id=' + encodeURIComponent(id) +
+                      '&__RequestVerificationToken=' + encodeURIComponent(tokenInput ? tokenInput.value : '')
+            })
+                .then((res) => res.json())
+                .then((data) => {
+                    if (!data.success) {
+                        showToast(data.message || 'Could not update this.', 'over');
+                        return;
+                    }
+                    // Drop it from the client-side catalog cache and DOM, then re-render
+                    // so the section count and empty-state stay accurate.
+                    // Remove every copy of the product (AI section + catalogue).
+                    document.querySelectorAll('.product-card[data-id="' + id + '"]').forEach((c) => {
+                        catalogItems = catalogItems.filter((it) => it.el !== c);
+                        c.remove();
+                    });
+                    renderCatalog();
+                    showToast(`Won't show "${name}" again`, 'success');
+                })
+                .catch(() => showToast('Something went wrong. Please try again.', 'over'));
+        }
+
+        // ---------------- AI recommendations ----------------
+        // Cards are built client-side (the AI call takes a second or two, so it is fetched
+        // after the page renders instead of blocking it). They use the same .product-card
+        // markup as the catalogue, so favourite / add / right-click all work through the
+        // existing delegated handlers.
+        let aiLoading = false;
+
+        function aiStoreBadges(storeField) {
+            const store = String(storeField || '').toLowerCase();
+            const names = Object.keys(STORE_LOGOS).filter((k) => store.indexOf(k.toLowerCase()) >= 0);
+            if (names.length === 0) return '';
+            return '<div class="store-badges">' + names.map((k) =>
+                `<img class="store-badge" src="${esc(IMG_BASE + STORE_LOGOS[k])}" alt="${esc(k)}" title="${esc(k)}" />`
+            ).join('') + '</div>';
+        }
+
+        function aiCardHtml(it) {
+            const price = String(it.Price);
+            const reason = it.Reason || 'Random pick - personalised suggestions are unavailable right now.';
+            const img = it.ImageUrl
+                ? `<img src="${esc(it.ImageUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.style.display='none'" />`
+                : '';
+
+            return `<div class="product-card ai-card" data-price="${esc(price)}" data-category="${esc(it.Category)}" data-store="${esc(it.Store)}" data-id="${esc(it.Id)}" data-name="${esc(it.Name)}">
+              <div class="product-thumb">
+                ${img}
+                ${aiStoreBadges(it.Store)}
+                <button type="button" class="fav-btn${it.IsFavourite ? ' active' : ''}" data-id="${esc(it.Id)}" aria-pressed="${it.IsFavourite ? 'true' : 'false'}" aria-label="Favourite ${esc(it.Name)}">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z" /></svg>
+                </button>
+                <button class="add-btn" data-name="${esc(it.Name)}" data-price="${esc(price)}" data-store="${esc(it.Store)}">+</button>
+              </div>
+              <div class="product-info">
+                <span class="product-name">${esc(it.Name)}</span>
+                <span class="product-price">${esc('R' + price)} <span class="store">${esc(it.Store)}</span></span>
+              </div>
+              <div class="ai-reason">
+                <img src="${esc(IMG_BASE)}information.png" alt="" />
+                <span>${esc(reason)}</span>
+              </div>
+            </div>`;
+        }
+
+        function aiReloadCardHtml() {
+            return `<button type="button" class="ai-reload-card" id="ai-reload-btn">
+              <img src="${esc(IMG_BASE)}reload.gif" alt="" />
+              <span>Reload suggestions</span>
+            </button>`;
+        }
+
+        function renderAIGrid(items) {
+            const grid = document.getElementById('ai-grid');
+            if (!grid) return;
+            let html = items.map(aiCardHtml).join('');
+            if (items.length === 0) html += '<p class="ai-empty">No suggestions right now. Try reloading.</p>';
+            grid.innerHTML = html + aiReloadCardHtml();
+            sortAIGrid();
+            applyFiltersToAI();
+        }
+
+        function loadAIRecommendations(isReload) {
+            if (aiLoading) return;
+            aiLoading = true;
+
+            const grid = document.getElementById('ai-grid');
+            const reloadBtn = document.getElementById('ai-reload-btn');
+            grid.classList.add('is-loading');
+            if (reloadBtn) reloadBtn.disabled = true;
+
+            // Timestamp so the browser never serves a cached (old) pool.
+            fetch(AI_URL + '?_=' + Date.now(), {
+                credentials: 'same-origin',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+                .then((res) => {
+                    if (!res.ok) throw new Error('Request failed: ' + res.status);
+                    return res.json();
+                })
+                .then((data) => {
+                    if (!data.success) throw new Error('Not successful');
+                    renderAIGrid(data.items || []);
+                    if (data.fallback) {
+                        showToast('Personalised suggestions are unavailable right now - showing a random pick.', 'warn');
+                    } else if (isReload) {
+                        showToast('Suggestions updated', 'success');
+                    }
+                })
+                .catch(() => {
+                    // First load failed: swap the skeletons for an empty grid with the reload card.
+                    if (!document.getElementById('ai-reload-btn')) renderAIGrid([]);
+                    showToast('Could not load suggestions. Please try again.', 'over');
+                })
+                .finally(() => {
+                    aiLoading = false;
+                    grid.classList.remove('is-loading');
+                    const btn = document.getElementById('ai-reload-btn');
+                    if (btn) btn.disabled = false;
+                });
+        }
+
+        // The user's own show/hide choice is remembered between visits.
+        const AI_COLLAPSED_KEY = 'smartspend.aiCollapsed';
+        let aiLoadedOnce = false;
+
+        function readAICollapsed() {
+            try { return localStorage.getItem(AI_COLLAPSED_KEY) === '1'; } catch (e) { return false; }
+        }
+
+        function saveAICollapsed(collapsed) {
+            try { localStorage.setItem(AI_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (e) { /* storage unavailable */ }
+        }
+
+        function setAICollapsed(collapsed) {
+            const section = document.getElementById('ai-section');
+            const toggle = document.getElementById('ai-toggle');
+            const label = document.getElementById('ai-toggle-label');
+            if (!section || !toggle) return;
+
+            section.classList.toggle('is-collapsed', collapsed);
+            toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+            if (label) label.textContent = collapsed ? 'Show' : 'Hide';
+        }
+
+        function initAIRecommendations() {
+            const section = document.getElementById('ai-section');
+            if (!section) return;
+
+            const collapsed = readAICollapsed();
+            setAICollapsed(collapsed);
+
+            section.addEventListener('click', (e) => {
+                const btn = e.target.closest('#ai-reload-btn');
+                if (btn && !btn.disabled) {
+                    loadAIRecommendations(true);
+                    return;
+                }
+
+                if (e.target.closest('#ai-toggle')) {
+                    const nowCollapsed = !section.classList.contains('is-collapsed');
+                    setAICollapsed(nowCollapsed);
+                    saveAICollapsed(nowCollapsed);
+                    // First time it is shown this visit: fetch suggestions now.
+                    if (!nowCollapsed && !aiLoadedOnce) {
+                        aiLoadedOnce = true;
+                        loadAIRecommendations(false);
+                    }
+                }
+            });
+
+            // Hidden on load? Skip the AI call entirely until the user opens it.
+            if (!collapsed) {
+                aiLoadedOnce = true;
+                loadAIRecommendations(false);
+            }
+        }
+
+        // ---------------- Drawer open/close ----------------
+        function openDrawer(id) {
+            document.getElementById(id).classList.add('open');
+            document.getElementById('overlay').classList.add('visible');
+            if (id === 'cart-drawer' && window.TravelPlanner) TravelPlanner.prepareAll();
+        }
+        function closeDrawers() {
+            document.getElementById('nav-drawer').classList.remove('open');
+            document.getElementById('cart-drawer').classList.remove('open');
+            document.getElementById('overlay').classList.remove('visible');
+        }
+
+        // ---------------- Onboarding: first landing after saving preferences ----------------
+        // Opens the shopping-list drawer (where the budget input lives) and puts the cursor
+        // in the budget box. The pulsing highlight + hint text are rendered by renderCartDrawer
+        // while state.nudgeBudget is true.
+        function startBudgetNudge() {
+            // Short delay: lets the page paint first so the drawer visibly slides in.
+            setTimeout(() => {
+                openDrawer('cart-drawer');
+                // Wait for the slide-in transition before focusing, otherwise the browser scrolls awkwardly.
+                setTimeout(() => {
+                    const input = document.getElementById('budget-input');
+                    if (input) input.focus({ preventScroll: true });
+                }, 450);
+            }, 500);
+        }
+
+        // ---------------- Event wiring ----------------
+        document.addEventListener('DOMContentLoaded', () => {
+            renderAll();
+
+            document.getElementById('nav-toggle').addEventListener('click', () => openDrawer('nav-drawer'));
+            document.getElementById('cart-toggle').addEventListener('click', () => openDrawer('cart-drawer'));
+            document.getElementById('overlay').addEventListener('click', closeDrawers);
+            document.getElementById('nav-close').addEventListener('click', closeDrawers);
+            document.getElementById('cart-close').addEventListener('click', closeDrawers);
+            const logoutBtn = document.getElementById('logout-btn');
+            if (logoutBtn) {
+                logoutBtn.addEventListener('click', () => {
+                    window.location.href = logoutBtn.getAttribute('data-url') || '/Account/Login';
+                });
+            }
+
+            // Add-to-list and favourite buttons on product cards (delegated: there can be thousands of cards)
+            document.querySelector('.page-body').addEventListener('click', (e) => {
+                const addBtn = e.target.closest('.add-btn');
+                if (addBtn) {
+                    addToList(addBtn.getAttribute('data-name'), parseFloat(addBtn.getAttribute('data-price')), addBtn.getAttribute('data-store'));
+                    return;
+                }
+                const favBtn = e.target.closest('.fav-btn');
+                if (favBtn && !favBtn.disabled) toggleFavourite(favBtn);
+            });
+
+            // Right-click a product card -> "I don't want to see this product again"
+            document.querySelector('.page-body').addEventListener('contextmenu', (e) => {
+                const card = e.target.closest('.product-card');
+                if (!card) return;
+                e.preventDefault();
+                openCardContextMenu(e.clientX, e.clientY, card);
+            });
+
+            // Long-press the same card on touch devices to open the same menu.
+            const LONG_PRESS_MS = 500;
+            const LONG_PRESS_MOVE_TOLERANCE = 10;
+            let longPressTimer = null;
+            let longPressStart = null; // { x, y }
+            let longPressFired = false;
+
+            function cancelLongPress() {
+                if (longPressTimer) {
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+                longPressStart = null;
+            }
+
+            document.querySelector('.page-body').addEventListener('touchstart', (e) => {
+                const card = e.target.closest('.product-card');
+                // Skip the favourite/add buttons - they already have their own tap action.
+                if (!card || e.target.closest('.fav-btn') || e.target.closest('.add-btn')) return;
+                if (e.touches.length !== 1) return;
+
+                const touch = e.touches[0];
+                longPressStart = { x: touch.clientX, y: touch.clientY };
+                longPressFired = false;
+
+                longPressTimer = setTimeout(() => {
+                    longPressFired = true;
+                    longPressTimer = null;
+                    if (navigator.vibrate) navigator.vibrate(15);
+                    openCardContextMenu(touch.clientX, touch.clientY, card);
+                }, LONG_PRESS_MS);
+            }, { passive: true });
+
+            document.querySelector('.page-body').addEventListener('touchmove', (e) => {
+                if (!longPressStart || !longPressTimer) return;
+                const touch = e.touches[0];
+                const dx = Math.abs(touch.clientX - longPressStart.x);
+                const dy = Math.abs(touch.clientY - longPressStart.y);
+                // Finger is scrolling/dragging, not holding still - don't treat as long-press.
+                if (dx > LONG_PRESS_MOVE_TOLERANCE || dy > LONG_PRESS_MOVE_TOLERANCE) cancelLongPress();
+            }, { passive: true });
+
+            document.querySelector('.page-body').addEventListener('touchend', (e) => {
+                if (longPressFired) {
+                    // Swallow the tap that ends a successful long-press so it doesn't
+                    // also register as a click on whatever is under the finger.
+                    e.preventDefault();
+                    longPressFired = false;
+                }
+                cancelLongPress();
+            });
+
+            document.querySelector('.page-body').addEventListener('touchcancel', () => {
+                longPressFired = false;
+                cancelLongPress();
+            });
+
+            const ctxDislikeBtn = document.getElementById('ctx-dislike-btn');
+            if (ctxDislikeBtn) {
+                ctxDislikeBtn.addEventListener('click', () => {
+                    const card = contextMenuCard;
+                    closeCardContextMenu();
+                    if (card) dislikeProduct(card);
+                });
+            }
+
+            document.addEventListener('click', (e) => {
+                const menu = document.getElementById('card-context-menu');
+                if (menu && !menu.hidden && !menu.contains(e.target)) closeCardContextMenu();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closeCardContextMenu();
+            });
+            document.addEventListener('scroll', closeCardContextMenu, true);
+            window.addEventListener('resize', closeCardContextMenu);
+
+            // Category FABs: jump to the category section
+            const fabNav = document.querySelector('.category-fabs');
+            if (fabNav) {
+                const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                fabNav.addEventListener('click', (e) => {
+                    const fab = e.target.closest('.category-fab');
+                    if (!fab) return;
+                    const target = document.getElementById(fab.getAttribute('data-target'));
+                    if (target) target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+                });
+            }
+
+            // Back to top: appears (as the bottom-most FAB) after scrolling down a bit
+            const backToTop = document.getElementById('back-to-top');
+            if (backToTop) {
+                const SHOW_AFTER_PX = 300;
+                let scrollTicking = false;
+
+                function updateBackToTop() {
+                    scrollTicking = false;
+                    const visible = (window.pageYOffset || document.documentElement.scrollTop || 0) > SHOW_AFTER_PX;
+                    backToTop.classList.toggle('visible', visible);
+                    backToTop.setAttribute('aria-hidden', visible ? 'false' : 'true');
+                    backToTop.tabIndex = visible ? 0 : -1;
+                }
+
+                window.addEventListener('scroll', () => {
+                    if (!scrollTicking) {
+                        scrollTicking = true;
+                        window.requestAnimationFrame(updateBackToTop);
+                    }
+                }, { passive: true });
+
+                backToTop.addEventListener('click', () => {
+                    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+                });
+
+                updateBackToTop();
+            }
+
+            // Filter chips (visual toggle only in this prototype)
+            document.querySelectorAll('.chip').forEach((chip) => {
+                if (chip.id === 'chip-sort-price' || chip.id === 'chip-store-filter' || chip.id === 'chip-distance' || chip.id === 'chip-dietary') return;
+                chip.addEventListener('click', () => chip.classList.toggle('active'));
+            });
+
+            // Sort: Price chip — toggles ascending/descending price sort
+            const sortChip = document.getElementById('chip-sort-price');
+            if (sortChip) {
+                sortChip.addEventListener('click', () => {
+                    catalogView.sortDir = catalogView.sortDir === 'asc' ? 'desc' : 'asc';
+                    sortChip.textContent = 'Sort: Price ' + (catalogView.sortDir === 'asc' ? '↑' : '↓');
+                    renderCatalog();
+                    sortAIGrid();
+                });
+            }
+
+            // Store dropdown — lets the user narrow the catalogue to a single retailer
+            const storeWrap = document.getElementById('store-filter-wrap');
+            const storeChip = document.getElementById('chip-store-filter');
+            const storeMenu = document.getElementById('store-dropdown-menu');
+
+            function closeStoreMenu() {
+                if (!storeMenu) return;
+                storeMenu.hidden = true;
+                if (storeChip) storeChip.setAttribute('aria-expanded', 'false');
+            }
+
+            if (storeChip && storeMenu) {
+                storeChip.addEventListener('click', () => {
+                    const willOpen = storeMenu.hidden;
+                    storeMenu.hidden = !willOpen;
+                    storeChip.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+                });
+
+                storeMenu.addEventListener('click', (e) => {
+                    const option = e.target.closest('.chip-dropdown-item');
+                    if (!option) return;
+
+                    const chosenStore = option.getAttribute('data-store') || '';
+                    catalogView.storeFilter = chosenStore;
+
+                    storeMenu.querySelectorAll('.chip-dropdown-item').forEach((el) => {
+                        const isChosen = el === option;
+                        el.classList.toggle('active', isChosen);
+                        el.setAttribute('aria-selected', isChosen ? 'true' : 'false');
+                    });
+
+                    storeChip.classList.toggle('active', chosenStore !== '');
+                    const storeLabel = document.getElementById('store-filter-label');
+                    if (storeLabel) storeLabel.textContent = chosenStore || 'Store';
+
+                    closeStoreMenu();
+                    applyFilters();
+                });
+
+                // Close the dropdown when clicking anywhere outside it, or on Escape.
+                document.addEventListener('click', (e) => {
+                    if (storeWrap && !storeWrap.contains(e.target)) closeStoreMenu();
+                });
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') closeStoreMenu();
+                });
+            }
+
+            // Build the client-side catalog cache used by sort/filter, from the
+            // server-rendered cards already in the DOM.
+            initCatalog();
+
+            // Dietary chip (filter is ON by default when the shopper has dietary needs / allergies saved)
+            initDietaryFilter();
+
+            // AI recommendations section (loads in the background)
+            initAIRecommendations();
+
+            // Live search: filters product cards as the user types
+            const searchInput = document.getElementById('product-search');
+            if (searchInput) {
+                searchInput.addEventListener('input', applyFilters);
+            }
+
+            // Delegated events inside the cart drawer (re-rendered content)
+            document.getElementById('cart-body').addEventListener('click', (e) => {
+                const removeBtn = e.target.closest('[data-remove]');
+                if (removeBtn) { removeItem(removeBtn.getAttribute('data-remove')); return; }
+
+                const qtyPlusBtn = e.target.closest('[data-qty-plus]');
+                if (qtyPlusBtn) { changeQty(qtyPlusBtn.getAttribute('data-qty-plus'), 1); return; }
+
+                const qtyMinusBtn = e.target.closest('[data-qty-minus]');
+                if (qtyMinusBtn) { changeQty(qtyMinusBtn.getAttribute('data-qty-minus'), -1); return; }
+
+                const transportBtn = e.target.closest('.transport-pill');
+                if (transportBtn) { setTransport(transportBtn.getAttribute('data-store'), transportBtn.getAttribute('data-method')); return; }
+
+                const branchBtn = e.target.closest('[data-branch-store]');
+                if (branchBtn) { TravelPlanner.openPicker(branchBtn.getAttribute('data-branch-store')); return; }
+
+                const retryBtn = e.target.closest('[data-travel-retry]');
+                if (retryBtn) { TravelPlanner.retry(retryBtn.getAttribute('data-travel-retry')); return; }
+
+                if (e.target.closest('#start-list-btn')) {
+                    const input = document.getElementById('budget-input');
+                    setBudget(input.value);
+                    return;
+                }
+                if (e.target.closest('#budget-pill')) {
+                    const row = document.getElementById('budget-edit-row');
+                    row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+                    return;
+                }
+                if (e.target.closest('#budget-save-btn')) {
+                    const input = document.getElementById('budget-input');
+                    setBudget(input.value);
+                    return;
+                }
+            });
+
+            document.getElementById('cart-footer').addEventListener('click', (e) => {
+                const exportBtn = e.target.closest('#export-btn');
+                if (!exportBtn) return;
+
+                const groups = groupItemsByStore();
+                const missingStores = Object.keys(groups).filter((store) => !state.transport[store]);
+                if (missingStores.length > 0) {
+                    const list = missingStores.join(', ');
+                    showToast(`Please select a transport method for: ${list}`, 'warn');
+                    return;
+                }
+
+                // A taxi / Uber-Bolt choice needs its road-route estimate first.
+                const waiting = Object.keys(groups).filter((store) => window.TravelPlanner && !TravelPlanner.isReady(store, state.transport[store]));
+                if (waiting.length > 0) {
+                    showToast(`The travel estimate for ${waiting.join(', ')} isn't available yet. Wait a moment, or choose another transport method.`, 'warn');
+                    return;
+                }
+
+                downloadShoppingListPdf(exportBtn);
+            });
+
+            // Press Enter in the budget box to save it (same as clicking the button).
+            document.getElementById('cart-body').addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' || !e.target || e.target.id !== 'budget-input') return;
+                e.preventDefault();
+                setBudget(e.target.value);
+            });
+
+            // Once the user starts typing, stop the attention-grabbing pulse (keep the steady highlight).
+            document.getElementById('cart-body').addEventListener('input', (e) => {
+                if (!e.target || e.target.id !== 'budget-input') return;
+                const box = e.target.closest('.budget-set-box');
+                if (box) box.classList.toggle('has-value', e.target.value !== '');
+            });
+
+            // First landing after setting preferences: open the drawer and prompt for a budget.
+            if (ONBOARDING) startBudgetNudge();
+        });
+
+    </script>
+
+    <script>
+        // ---------------- Distance filter modal (Google Maps Platform) ----------------
+        // Flow: geocode the saved address -> search each supported retailer's nearest branches
+        // (Places) -> straight-line distance from the address -> radius buttons only show/hide
+        // what is already loaded (no extra API calls) -> Apply hands the set of eligible
+        // retailers to the catalogue filter (applyFilters), which already combines with the
+        // store dropdown, search box and price sort.
+        const SAVED_ADDRESS = @Html.Raw(Json.Encode((string)ViewBag.savedAddress ?? ""));
+        const MAPS_KEY = @Html.Raw(Json.Encode((string)ViewBag.mapsKey ?? ""));
+
+        (function () {
+            const DEFAULT_KM = 2;
+            const PIN = {
+                'Woolworths': { color: '#111827', text: 'W' },
+                'Checkers': { color: '#0d9488', text: 'C' },
+                'Shoprite': { color: '#dc2626', text: 'S' },
+                'Pick n Pay': { color: '#2563eb', text: 'P' }
+            };
+
+            const st = {
+                radiusKm: DEFAULT_KM,
+                ready: false,
+                loading: null,
+                map: null,
+                origin: null,
+                circle: null,
+                info: null,
+                branches: [],   // { retailer, name, vicinity, lat, lng, km, marker }, nearest first
+                lastFocus: null
+            };
+
+            let mapsScript = null;
+            let authFailed = false;
+            let el = {};
+
+            // ---------- small helpers ----------
+            function fmtKm(km) { return km < 10 ? km.toFixed(1) : String(Math.round(km)); }
+
+            function haversineKm(a, b) {
+                const R = 6371, rad = Math.PI / 180;
+                const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+                const h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+                return 2 * R * Math.asin(Math.sqrt(h));
+            }
+
+            function pinEl(text, color, size, extraClass) {
+                const d = document.createElement('div');
+                d.className = 'dist-pin' + (extraClass ? ' ' + extraClass : '');
+                d.style.background = color;
+                d.style.width = d.style.height = size + 'px';
+                d.textContent = text;
+                return d;
+            }
+
+            function retailerBranches(name) { return st.branches.filter((b) => b.retailer === name); }
+            function withinKm(name, km) { return retailerBranches(name).filter((b) => b.km <= km); }
+
+            // ---------- Google Maps loading ----------
+            // The script is only fetched the first time the modal opens, so the Main page
+            // itself makes no Maps requests for people who never use the filter.
+            function loadMaps() {
+                if (window.google && google.maps && google.maps.importLibrary) return Promise.resolve();
+                if (mapsScript) return mapsScript;
+
+                mapsScript = new Promise((resolve, reject) => {
+                    if (!MAPS_KEY) { reject(new Error('The Google Maps API key is not configured.')); return; }
+                    window.__smartSpendMapsReady = resolve;
+                    window.gm_authFailure = function () { authFailed = true; };
+                    const s = document.createElement('script');
+                    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(MAPS_KEY) +
+                        '&libraries=places,marker&loading=async&callback=__smartSpendMapsReady';
+                    s.async = true;
+                    s.onerror = () => reject(new Error('Could not load Google Maps. Please check your connection.'));
+                    document.head.appendChild(s);
+                });
+                mapsScript.catch(() => { mapsScript = null; });
+                return mapsScript;
+            }
+
+            function geocode(address) {
+                return google.maps.importLibrary('geocoding').then((lib) =>
+                    new lib.Geocoder().geocode({ address: address })
+                ).then((res) => {
+                    const loc = res.results[0].geometry.location;
+                    return { lat: loc.lat(), lng: loc.lng() };
+                }).catch((err) => {
+                    const code = err && err.code;
+                    if (code === 'ZERO_RESULTS') throw new Error("We couldn't find your saved address on the map.");
+                    if (code === 'REQUEST_DENIED') throw new Error('Google rejected the address lookup. Make sure the Geocoding API is enabled for your API key.');
+                    throw new Error('Could not look up your saved address (' + (code || 'unknown error') + ').');
+                });
+            }
+
+            // Nearest branches first, so the closest one per retailer is always found
+            // (which is all eligibility needs). Google returns up to 20 per search.
+            function searchRetailer(service, origin, retailer) {
+                return new Promise((resolve, reject) => {
+                    service.nearbySearch({
+                        location: origin,
+                        rankBy: google.maps.places.RankBy.DISTANCE,
+                        keyword: retailer.keyword
+                    }, (results, status) => {
+                        const S = google.maps.places.PlacesServiceStatus;
+                        if (status === S.OK) resolve(results || []);
+                        else if (status === S.ZERO_RESULTS) resolve([]);
+                        else if (status === S.REQUEST_DENIED) reject(new Error('Google rejected the store search. Make sure the Places API is enabled for your API key.'));
+                        else reject(new Error('Store search failed (' + status + ').'));
+                    });
+                });
+            }
+
+            // Keyword search is loose, so keep only places whose name really is that retailer.
+            function isBranchOf(retailer, place) {
+                if (!place || !place.geometry || !place.geometry.location) return false;
+                if (place.business_status === 'CLOSED_PERMANENTLY') return false;
+                if (/liquor|clothing/i.test(place.name || '')) return false;   // not grocery branches
+                const n = normaliseName(place.name);
+                return retailer.match.some((m) => n.indexOf(m) >= 0);
+            }
+
+            // ---------- Modal UI ----------
+            function setMapMsg(text, withRetry) {
+                const box = el.mapMsg;
+                box.replaceChildren();
+                if (!text) { box.hidden = true; return; }
+                const p = document.createElement('span');
+                p.textContent = text;
+                if (!withRetry && text.indexOf('\u2026') > 0) {
+                    const spin = document.createElement('span');
+                    spin.className = 'dist-spinner';
+                    spin.setAttribute('aria-hidden', 'true');
+                    box.appendChild(spin);
+                }
+                box.appendChild(p);
+                if (withRetry) {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'dist-btn';
+                    btn.textContent = 'Try again';
+                    btn.addEventListener('click', () => ensureData());
+                    box.appendChild(btn);
+                }
+                box.hidden = false;
+            }
+
+            function showLoadError(err) {
+                const msg = authFailed
+                    ? "Google Maps rejected the API key. Check the key's HTTP referrer and API restrictions."
+                    : ((err && err.message) || 'Something went wrong loading the map.');
+                setMapMsg(msg, true);
+                el.apply.disabled = true;
+            }
+
+            function renderPreview() {
+                const km = st.radiusKm;
+
+                el.radiusBtns.forEach((b) => {
+                    const on = Number(b.getAttribute('data-km')) === km;
+                    b.classList.toggle('active', on);
+                    b.setAttribute('aria-checked', on ? 'true' : 'false');
+                });
+                el.within.textContent = 'Within ' + km + ' km';
+
+                el.list.replaceChildren();
+                el.note.hidden = true;
+                if (!st.ready) return;
+
+                st.circle.setRadius(km * 1000);
+                st.branches.forEach((b) => { b.marker.map = b.km <= km ? st.map : null; });
+                if (st.info) st.info.close();
+                const bounds = st.circle.getBounds();
+                if (bounds) st.map.fitBounds(bounds, 16);
+
+                let anyEligible = false;
+                RETAILERS.forEach((r) => {
+                    const all = retailerBranches(r.name);
+                    const within = withinKm(r.name, km);
+                    if (within.length) anyEligible = true;
+
+                    const li = document.createElement('li');
+                    li.className = 'dist-retailer ' + (within.length ? 'is-in' : 'is-out');
+
+                    const dot = document.createElement('span');
+                    dot.className = 'dist-retailer-dot';
+                    dot.style.background = PIN[r.name].color;
+                    const name = document.createElement('span');
+                    name.className = 'dist-retailer-name';
+                    name.textContent = r.name;
+                    const mark = document.createElement('span');
+                    mark.className = 'dist-retailer-mark';
+                    mark.textContent = within.length ? '\u2713' : '\u2715';
+                    mark.setAttribute('aria-label', within.length ? 'available within range' : 'not within range');
+                    const detail = document.createElement('span');
+                    detail.className = 'dist-retailer-detail';
+                    if (within.length) {
+                        detail.textContent = fmtKm(within[0].km) + ' km away \u00b7 ' + within.length + (within.length === 1 ? ' branch' : ' branches');
+                    } else if (all.length) {
+                        detail.textContent = 'Nearest is ' + fmtKm(all[0].km) + ' km away';
+                    } else {
+                        detail.textContent = 'No branches found nearby';
+                    }
+
+                    li.append(dot, name, mark, detail);
+                    el.list.appendChild(li);
+                });
+
+                if (!anyEligible) {
+                    el.note.textContent = 'No supported store has a branch within ' + km + ' km. Applying this will hide all products \u2014 try a larger distance.';
+                    el.note.hidden = false;
+                }
+            }
+
+            function openInfo(b) {
+                const box = document.createElement('div');
+                box.className = 'dist-info';
+                const t = document.createElement('strong');
+                t.textContent = b.name;
+                box.appendChild(t);
+                if (b.vicinity) {
+                    const v = document.createElement('div');
+                    v.textContent = b.vicinity;
+                    box.appendChild(v);
+                }
+                const d = document.createElement('div');
+                d.className = 'dist-info-km';
+                d.textContent = fmtKm(b.km) + ' km from your address';
+                box.appendChild(d);
+                st.info.setContent(box);
+                st.info.open({ map: st.map, anchor: b.marker });
+            }
+
+            // Loads Maps, geocodes the address, searches the retailers, builds the markers.
+            // Safe to call again after a failure - it resumes where it stopped.
+            function ensureData() {
+                if (st.ready) return Promise.resolve();
+                if (st.loading) return st.loading;
+
+                st.loading = (async () => {
+                    setMapMsg('Loading map\u2026');
+                    await loadMaps();
+                    const libs = await Promise.all([
+                        google.maps.importLibrary('maps'),
+                        google.maps.importLibrary('marker'),
+                        google.maps.importLibrary('places')
+                    ]);
+                    const AdvancedMarkerElement = libs[1].AdvancedMarkerElement;
+
+                    if (!st.origin) {
+                        setMapMsg('Finding your address\u2026');
+                        st.origin = await geocode(SAVED_ADDRESS);
+                    }
+
+                    if (!st.map) {
+                        st.map = new libs[0].Map(el.map, {
+                            center: st.origin,
+                            zoom: 12,
+                            mapId: 'DEMO_MAP_ID',
+                            mapTypeControl: false,
+                            streetViewControl: false,
+                            fullscreenControl: false
+                        });
+                        st.info = new libs[0].InfoWindow();
+                        st.circle = new google.maps.Circle({
+                            map: st.map,
+                            center: st.origin,
+                            radius: st.radiusKm * 1000,
+                            strokeColor: '#16a34a',
+                            strokeOpacity: 0.9,
+                            strokeWeight: 2,
+                            fillColor: '#16a34a',
+                            fillOpacity: 0.08,
+                            clickable: false
+                        });
+                        new AdvancedMarkerElement({
+                            map: st.map,
+                            position: st.origin,
+                            title: 'Your saved address',
+                            content: pinEl('', '#2563eb', 18, 'dist-pin-you'),
+                            zIndex: 1000
+                        });
+                    }
+
+                    setMapMsg('Searching for nearby stores\u2026');
+                    const service = new google.maps.places.PlacesService(st.map);
+                    const found = await Promise.all(RETAILERS.map((r) =>
+                        searchRetailer(service, st.origin, r).then((results) => ({ retailer: r, results: results }))
+                    ));
+
+                    const branches = [];
+                    found.forEach((f) => {
+                        const seen = new Set();
+                        f.results.forEach((p) => {
+                            if (!isBranchOf(f.retailer, p) || seen.has(p.place_id)) return;
+                            seen.add(p.place_id);
+                            const pos = { lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
+                            const b = {
+                                retailer: f.retailer.name,
+                                name: p.name,
+                                vicinity: p.vicinity || '',
+                                lat: pos.lat,
+                                lng: pos.lng,
+                                km: haversineKm(st.origin, pos)
+                            };
+                            b.marker = new AdvancedMarkerElement({
+                                position: pos,
+                                title: p.name,
+                                content: pinEl(PIN[f.retailer.name].text, PIN[f.retailer.name].color, 26)
+                            });
+                            b.marker.addEventListener('gmp-click', () => openInfo(b));
+                            branches.push(b);
+                        });
+                    });
+                    branches.sort((a, b) => a.km - b.km);
+                    st.branches = branches;
+
+                    st.ready = true;
+                    setMapMsg('');
+                    el.apply.disabled = false;
+                    renderPreview();
+                })();
+
+                st.loading.catch((err) => { st.loading = null; showLoadError(err); });
+                return st.loading;
+            }
+
+            function openModal() {
+                st.lastFocus = document.activeElement;
+                st.radiusKm = catalogView.distanceKm || DEFAULT_KM;   // start from what is currently applied
+                el.modal.hidden = false;
+                document.body.classList.add('dist-modal-open');
+                el.clear.hidden = catalogView.eligibleRetailers === null;
+                el.address.textContent = SAVED_ADDRESS ? 'Starting from: ' + SAVED_ADDRESS : '';
+
+                if (!SAVED_ADDRESS.trim()) {
+                    el.apply.disabled = true;
+                    setMapMsg('You have not saved an address yet. Add one in your profile to filter by distance.');
+                    renderPreview();
+                    el.close.focus();
+                    return;
+                }
+
+                renderPreview();
+                if (st.ready) {
+                    el.apply.disabled = false;
+                    window.requestAnimationFrame(renderPreview);   // re-fit once the dialog has its size back
+                } else {
+                    el.apply.disabled = true;
+                    ensureData();
+                }
+                (el.radiusBtns.find((b) => b.classList.contains('active')) || el.close).focus();
+            }
+
+            function closeModal() {
+                el.modal.hidden = true;
+                document.body.classList.remove('dist-modal-open');
+                if (st.lastFocus && st.lastFocus.focus) st.lastFocus.focus();
+            }
+
+            function updateChip() {
+                const on = catalogView.eligibleRetailers !== null;
+                el.chip.classList.toggle('active', on);
+                el.chipLabel.textContent = on ? 'Distance: ' + catalogView.distanceKm + ' km' : 'Distance';
+            }
+
+            function applyDistance() {
+                if (!st.ready) return;
+                const km = st.radiusKm;
+                const eligible = new Set(RETAILERS.filter((r) => withinKm(r.name, km).length > 0).map((r) => r.name));
+
+                catalogView.distanceKm = km;
+                catalogView.eligibleRetailers = eligible;
+                updateChip();
+                closeModal();
+                applyFilters();
+
+                if (eligible.size === 0) {
+                    showToast('No supported store has a branch within ' + km + ' km of your address.', 'warn');
+                } else {
+                    showToast('Showing ' + Array.from(eligible).join(', ') + ' (within ' + km + ' km)', 'success');
+                }
+            }
+
+            function clearDistance() {
+                catalogView.distanceKm = null;
+                catalogView.eligibleRetailers = null;
+                updateChip();
+                closeModal();
+                applyFilters();
+                showToast('Distance filter cleared', 'success');
+            }
+
+            function onKeydown(e) {
+                if (el.modal.hidden) return;
+                if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
+                if (e.key !== 'Tab') return;
+                const focusable = Array.from(el.dialog.querySelectorAll('button:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+                    .filter((n) => n.offsetParent !== null);
+                if (!focusable.length) return;
+                const first = focusable[0], last = focusable[focusable.length - 1];
+                if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+            }
+
+            // Shared with the shopping-list branch picker (TravelPlanner) so Maps is only ever loaded once.
+            window.SmartSpendMaps = {
+                loadMaps: loadMaps,
+                geocode: geocode,
+                searchRetailer: searchRetailer,
+                isBranchOf: isBranchOf,
+                PIN: PIN,
+                authFailed: function () { return authFailed; }
+            };
+
+            document.addEventListener('DOMContentLoaded', () => {
+                el = {
+                    chip: document.getElementById('chip-distance'),
+                    chipLabel: document.getElementById('distance-chip-label'),
+                    modal: document.getElementById('distance-modal'),
+                    dialog: document.querySelector('#distance-modal .dist-dialog'),
+                    map: document.getElementById('dist-map'),
+                    mapMsg: document.getElementById('dist-map-msg'),
+                    address: document.getElementById('dist-address'),
+                    within: document.getElementById('dist-within'),
+                    list: document.getElementById('dist-retailers'),
+                    note: document.getElementById('dist-note'),
+                    apply: document.getElementById('dist-apply'),
+                    clear: document.getElementById('dist-clear'),
+                    close: document.getElementById('dist-close'),
+                    radiusBtns: Array.from(document.querySelectorAll('.dist-radius-btn'))
+                };
+                if (!el.chip || !el.modal) return;
+
+                el.chip.addEventListener('click', openModal);
+                el.close.addEventListener('click', closeModal);
+                document.getElementById('dist-cancel').addEventListener('click', closeModal);
+                document.getElementById('dist-backdrop').addEventListener('click', closeModal);
+                el.apply.addEventListener('click', applyDistance);
+                el.clear.addEventListener('click', clearDistance);
+                el.radiusBtns.forEach((b) => b.addEventListener('click', () => {
+                    st.radiusKm = Number(b.getAttribute('data-km'));
+                    renderPreview();
+                }));
+                document.addEventListener('keydown', onKeydown);
+            });
+        })();
+    </script>
+
+
+    <script>
+        // ---------------- Travel planner: a branch per store group + road-route travel estimates ----------------
+        // Every store group in the shopping list keeps its own selected branch. The branch is
+        // found with Places (nearest first, the same search the Distance filter uses) and the
+        // distance/time come from Google's road routing (Directions, with the Routes library as
+        // a fallback) - never from straight-line distance. Products are NOT branch-specific:
+        // the branch only affects where you travel to and what the trip is estimated to cost.
+        //
+        // API usage is kept small on purpose: nothing is requested until the shopping-list
+        // drawer is opened; the address is geocoded once, each retailer's branches are searched
+        // once, and every origin->branch route is cached for the life of the page.
+        (function () {
+            // Initial cost assumptions (Rand per km). Estimates only - not live fares.
+            const RATES = { walk: 0, taxi: 11, rideshare: 12 };
+            const ADDRESS_KEY = 'address';   // starting point: the user's saved address (else another store group's key)
+
+            const groups = {};               // store -> { store, branch, originKey, route, status, error, token }
+            const branchCache = new Map();   // retailer name -> Promise<branch[]>
+            const routeCache = new Map();    // "olat,olng,dlat,dlng" -> Promise<{meters, seconds, path}>
+            let addressPromise = null;
+            let pickerSeq = 0;
+            let picker = null;
+            let map = null, poly = null, originMarker = null;
+            let el = {};
+
+            const PIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0Z"/><circle cx="12" cy="10" r="3"/></svg>';
+
+            // ---------- small helpers ----------
+            function M() { return window.SmartSpendMaps; }
+            function money(n) { return 'R' + (Math.round(n * 100) / 100).toFixed(2); }
+            function fmtKm(km) { return km.toFixed(1); }
+            function fmtDuration(sec) {
+                const m = Math.max(1, Math.round(sec / 60));
+                if (m < 60) return m + ' min';
+                const h = Math.floor(m / 60), r = m % 60;
+                return h + ' h' + (r ? ' ' + r + ' min' : '');
+            }
+            // The distance shown is rounded to 0.1 km and the estimate uses that same figure,
+            // so what you read (4.8 km) always multiplies out to what you're charged (R52.80).
+            function summarise(r) { return { km: Math.round(r.meters / 100) / 10, seconds: r.seconds, path: r.path || [] }; }
+            function estimate(method, km) { return Math.round(km * RATES[method] * 100) / 100; }
+
+            function retailerFor(store) {
+                const name = retailerOf(store);
+                return RETAILERS.find((r) => r.name === name) || null;
+            }
+
+            // "Checkers Musgrave Centre" -> "Checkers - Musgrave Centre"
+            function branchLabel(retailerName, place) {
+                const raw = String(place.name || '').trim();
+                let rest = raw;
+                if (raw.toLowerCase().indexOf(retailerName.toLowerCase()) === 0) {
+                    rest = raw.slice(retailerName.length).replace(/^[\s\-\u2013,:]+/, '');
+                }
+                if (!rest) rest = String(place.vicinity || '').split(',')[0].trim();
+                return rest ? retailerName + ' - ' + rest : retailerName;
+            }
+
+            function grp(store) {
+                if (!groups[store]) {
+                    // No saved address / not a supported retailer: nothing to look up, so say so straight away.
+                    const status = !String(SAVED_ADDRESS || '').trim() ? 'noaddress' : (!retailerFor(store) ? 'unsupported' : 'idle');
+                    groups[store] = { store: store, branch: null, originKey: ADDRESS_KEY, route: null, status: status, error: '', token: 0 };
+                }
+                return groups[store];
+            }
+
+            function originLabel(g) {
+                if (g.originKey === ADDRESS_KEY) return 'My saved address';
+                const o = groups[g.originKey];
+                return o && o.branch ? o.branch.label : 'My saved address';
+            }
+
+            // ---------- Google Maps plumbing (shared with the Distance filter module) ----------
+            function mapsReady() {
+                if (!M()) return Promise.reject(new Error('Google Maps could not be started on this page.'));
+                return M().loadMaps();
+            }
+
+            function getAddress() {
+                if (!String(SAVED_ADDRESS || '').trim()) return Promise.reject(new Error('You have not saved an address yet.'));
+                if (!addressPromise) {
+                    addressPromise = mapsReady().then(() => M().geocode(SAVED_ADDRESS));
+                    addressPromise.catch(() => { addressPromise = null; });
+                }
+                return addressPromise;
+            }
+
+            // Nearest first (Places ranks by distance from the saved address). The first result is
+            // only used to pick the initial suggestion; it is never used for any cost.
+            function getBranches(retailer) {
+                if (!branchCache.has(retailer.name)) {
+                    const p = (async () => {
+                        const origin = await getAddress();
+                        await google.maps.importLibrary('places');
+                        const service = new google.maps.places.PlacesService(document.createElement('div'));
+                        const results = await M().searchRetailer(service, origin, retailer);
+                        const seen = new Set();
+                        const out = [];
+                        results.forEach((place) => {
+                            if (!M().isBranchOf(retailer, place) || seen.has(place.place_id)) return;
+                            seen.add(place.place_id);
+                            out.push({
+                                id: place.place_id,
+                                retailer: retailer.name,
+                                label: branchLabel(retailer.name, place),
+                                name: place.name,
+                                vicinity: place.vicinity || '',
+                                lat: place.geometry.location.lat(),
+                                lng: place.geometry.location.lng()
+                            });
+                        });
+                        return out;
+                    })();
+                    branchCache.set(retailer.name, p);
+                    p.catch(() => branchCache.delete(retailer.name));
+                }
+                return branchCache.get(retailer.name);
+            }
+
+            function routeKey(o, d) { return [o.lat, o.lng, d.lat, d.lng].map((n) => n.toFixed(5)).join(','); }
+
+            function computeRoute(o, d) {
+                const key = routeKey(o, d);
+                if (!routeCache.has(key)) {
+                    const p = requestRoute(o, d);
+                    routeCache.set(key, p);
+                    p.catch(() => routeCache.delete(key));
+                }
+                return routeCache.get(key);
+            }
+
+            // Road route by car. There is deliberately NO straight-line fallback: if Google cannot
+            // give a road route, the estimate is simply unavailable.
+            async function requestRoute(o, d) {
+                await mapsReady();
+                const lib = await google.maps.importLibrary('routes');
+                const toPath = (pts) => (pts || []).map((p) => ({
+                    lat: typeof p.lat === 'function' ? p.lat() : p.lat,
+                    lng: typeof p.lng === 'function' ? p.lng() : p.lng
+                }));
+
+                try {
+                    const res = await new lib.DirectionsService().route({ origin: o, destination: d, travelMode: 'DRIVING' });
+                    const route = res.routes[0];
+                    const leg = route.legs[0];
+                    return { meters: leg.distance.value, seconds: leg.duration.value, path: toPath(route.overview_path) };
+                } catch (err) {
+                    if (err && err.code === 'ZERO_RESULTS') throw new Error('No road route was found to that branch.');
+                }
+
+                if (lib.Route && lib.Route.computeRoutes) {
+                    try {
+                        const res = await lib.Route.computeRoutes({
+                            origin: o, destination: d, travelMode: 'DRIVING',
+                            fields: ['distanceMeters', 'durationMillis', 'path']
+                        });
+                        const r = res.routes && res.routes[0];
+                        if (r && r.distanceMeters != null) {
+                            return { meters: r.distanceMeters, seconds: Math.round((r.durationMillis || 0) / 1000), path: toPath(r.path) };
+                        }
+                    } catch (err2) { /* fall through to the friendly error */ }
+                }
+
+                throw new Error(M().authFailed()
+                    ? "Google Maps rejected the API key. Check the key's HTTP referrer and API restrictions."
+                    : 'Google would not return a road route. Make sure the Directions API (or the Routes API) is allowed on your Maps API key.');
+            }
+
+            // ---------- Per-store-group state ----------
+            async function resolveOrigin(g) {
+                if (g.originKey !== ADDRESS_KEY) {
+                    const o = groups[g.originKey];
+                    if (o && o.branch) return { lat: o.branch.lat, lng: o.branch.lng };
+                    g.originKey = ADDRESS_KEY;
+                }
+                return getAddress();
+            }
+
+            // Selected branch changed (or origin changed): drop the old route, ask Google for the new one.
+            async function refreshRoute(g, silent) {
+                const token = ++g.token;
+                g.route = null;                 // never keep showing the previous branch's distance
+                g.status = 'loading';
+                g.error = '';
+                if (!silent) notify();
+                try {
+                    const o = await resolveOrigin(g);
+                    const r = await computeRoute(o, g.branch);
+                    if (token !== g.token) return;
+                    g.route = summarise(r);
+                    g.status = 'ready';
+                } catch (err) {
+                    if (token !== g.token) return;
+                    g.status = 'error';
+                    g.error = (err && err.message) || 'Could not work out the route.';
+                }
+                notify();
+            }
+
+            // First time a store group is shown: suggest the nearest branch, then route to it.
+            async function prepare(store) {
+                const g = grp(store);
+                if (g.status !== 'idle') return;
+                const retailer = retailerFor(store);
+
+                g.status = 'loading';
+                try {
+                    if (!g.branch) {
+                        const branches = await getBranches(retailer);
+                        if (groups[store] !== g) return;
+                        if (!branches.length) throw new Error('No ' + retailer.name + ' branches were found near your address.');
+                        g.branch = branches[0];
+                    }
+                    await refreshRoute(g, true);
+                } catch (err) {
+                    if (groups[store] !== g) return;
+                    g.status = 'error';
+                    g.error = (err && err.message) || 'Could not find a branch.';
+                    notify();
+                }
+            }
+
+            function prepareAll() { Object.keys(groupItemsByStore()).forEach((s) => { prepare(s); }); }
+
+            function refreshDependents(store) {
+                Object.keys(groups).forEach((k) => {
+                    if (groups[k].originKey === store && groups[k].branch) refreshRoute(groups[k]);
+                });
+            }
+
+            // Same lifecycle as state.transport: a store group that leaves the list loses its branch.
+            function prune(activeStores) {
+                Object.keys(groups).forEach((store) => {
+                    if (activeStores.indexOf(store) >= 0) return;
+                    delete groups[store];
+                    Object.keys(groups).forEach((k) => {
+                        if (groups[k].originKey === store) {
+                            groups[k].originKey = ADDRESS_KEY;
+                            groups[k].route = null;
+                            groups[k].status = 'idle';
+                        }
+                    });
+                });
+            }
+
+            function retry(store) {
+                const g = groups[store];
+                if (!g) return;
+                g.status = 'idle';
+                g.error = '';
+                renderAll();
+            }
+
+            // Re-render the drawer, but never while the user is typing a budget (it would wipe the box).
+            function notify() {
+                const ae = document.activeElement;
+                if (ae && ae.id === 'budget-input') { setTimeout(notify, 600); return; }
+                if (typeof renderAll === 'function') renderAll();
+            }
+
+            // ---------- Numbers used by the drawer / True Cost ----------
+            function costFor(store, method) {
+                if (method === 'walk') return 0;
+                const g = groups[store];
+                if (!g || g.status !== 'ready' || !g.route) return null;
+                return estimate(method, g.route.km);
+            }
+            function cost(store, method) { const c = costFor(store, method); return c == null ? 0 : c; }
+            function isReady(store, method) {
+                if (method === 'taxi' || method === 'rideshare') return costFor(store, method) != null;
+                return true;
+            }
+            function branchText(store) {
+                const g = groups[store];
+                if (!g || !g.branch) return '';
+                return g.branch.label + (g.branch.vicinity ? ', ' + g.branch.vicinity : '');
+            }
+
+            // ---------- Drawer markup for one store group ----------
+            function travelHtml(store, method) {
+                const g = grp(store);
+                const st = g.status;
+                let top = '';
+
+                if (st === 'noaddress') {
+                    top = '<p class="travel-msg">Save an address in your profile to see nearby branches and travel estimates.</p>';
+                } else if (st === 'unsupported') {
+                    top = "<p class=\"travel-msg\">Branch lookup isn't available for this store.</p>";
+                } else if (g.branch) {
+                    top = '<button type="button" class="branch-pick" data-branch-store="' + esc(store) + '" aria-haspopup="dialog" title="Choose a different branch">' +
+                        PIN_SVG + '<span class="branch-pick-name">' + esc(g.branch.label) + '</span><span class="branch-pick-caret" aria-hidden="true">\u25BE</span></button>';
+                    if (st === 'ready' && g.route) {
+                        const from = g.originKey === ADDRESS_KEY ? '' : ' \u00b7 from ' + originLabel(g);
+                        top += '<div class="branch-meta"><strong>' + fmtKm(g.route.km) + ' km</strong> by road \u00b7 about ' + fmtDuration(g.route.seconds) + esc(from) + '</div>';
+                    } else if (st === 'error') {
+                        top += '<div class="branch-meta travel-err">' + esc(g.error) + ' <button type="button" class="travel-retry" data-travel-retry="' + esc(store) + '">Try again</button></div>';
+                    } else {
+                        top += '<div class="branch-meta">Calculating road distance\u2026</div>';
+                    }
+                } else if (st === 'error') {
+                    top = '<p class="travel-msg travel-err">' + esc(g.error) + ' <button type="button" class="travel-retry" data-travel-retry="' + esc(store) + '">Try again</button></p>';
+                } else {
+                    top = '<p class="travel-msg">Finding the nearest branch\u2026</p>';
+                }
+
+                const pill = (m, icon, label) => {
+                    const c = costFor(store, m);
+                    const known = c != null;
+                    const txt = known ? (c === 0 ? 'R0' : money(c)) : ((st === 'idle' || st === 'loading') ? '\u2026' : '\u2014');
+                    return '<button class="transport-pill ' + (method === m ? 'selected' : '') + '" data-store="' + esc(store) + '" data-method="' + m + '"' + (known ? '' : ' disabled') + '>' + icon + ' ' + label + ' ' + txt + '</button>';
+                };
+
+                return '<div class="travel-block"><div class="transport-label">Store branch</div>' + top + '</div>' +
+                    '<div class="transport-label">Transport Method \u00b7 estimated travel costs</div>' +
+                    '<div class="transport-options">' +
+                    pill('walk', '\uD83D\uDEB6', 'Walk') +
+                    pill('taxi', '\uD83D\uDE95', 'Taxi') +
+                    pill('rideshare', '\uD83D\uDE97', 'Uber/Bolt') +
+                    '<button class="transport-pill ' + (method === 'delivery' ? 'selected' : '') + '" data-store="' + esc(store) + '" data-method="delivery">Delivery (R' + DELIVERY_FEE + ')</button>' +
+                    '</div>' +
+                    '<p class="travel-note">Estimated travel costs, not live fares: Taxi R' + RATES.taxi + '/km, Uber/Bolt R' + RATES.rideshare + '/km, one way, using the road distance to the branch.</p>';
+            }
+
+            // ---------- Store-selection modal ----------
+            function pin(text, color, size, ring) {
+                const d = document.createElement('div');
+                d.className = 'dist-pin' + (ring ? ' branch-pin-selected' : '');
+                d.style.background = color;
+                d.style.width = d.style.height = size + 'px';
+                d.textContent = text;
+                return d;
+            }
+
+            function pinStyle(p) {
+                const s = M() && M().PIN && M().PIN[p.retailer.name];
+                return s || { color: '#0d9488', text: p.retailer.name.charAt(0) };
+            }
+
+            function setMsg(text) {
+                const box = el.mapMsg;
+                box.replaceChildren();
+                if (!text) { box.hidden = true; return; }
+                if (text.indexOf('\u2026') > 0) {
+                    const spin = document.createElement('span');
+                    spin.className = 'dist-spinner';
+                    spin.setAttribute('aria-hidden', 'true');
+                    box.appendChild(spin);
+                }
+                const t = document.createElement('span');
+                t.textContent = text;
+                box.appendChild(t);
+                box.hidden = false;
+            }
+
+            function fillOriginSelect(p) {
+                el.origin.replaceChildren();
+                const add = (value, text) => {
+                    const o = document.createElement('option');
+                    o.value = value;
+                    o.textContent = text;
+                    el.origin.appendChild(o);
+                };
+                add(ADDRESS_KEY, 'My saved address');
+                Object.keys(groups).forEach((k) => {
+                    if (k !== p.store && groups[k].branch) add(k, groups[k].branch.label);
+                });
+                el.origin.value = p.originKey;
+                if (el.origin.value !== p.originKey) { p.originKey = ADDRESS_KEY; el.origin.value = ADDRESS_KEY; }
+                el.origin.disabled = el.origin.options.length < 2;   // nothing else to start from yet
+            }
+
+            function pickerBranch(p) { return p.branches.find((b) => b.id === p.branchId) || null; }
+
+            async function pickerOrigin(p) {
+                if (p.originKey !== ADDRESS_KEY) {
+                    const o = groups[p.originKey];
+                    if (o && o.branch) return { lat: o.branch.lat, lng: o.branch.lng };
+                    p.originKey = ADDRESS_KEY;
+                }
+                return getAddress();
+            }
+
+            function renderSummary(p, state, err) {
+                const b = pickerBranch(p);
+                const r = p.route;
+                const dash = state === 'loading' ? 'Calculating\u2026' : '\u2014';
+                const km = r ? fmtKm(r.km) + ' km' : dash;
+                const time = r ? fmtDuration(r.seconds) + ' by car' : dash;
+                const c = (m) => r ? (m === 'walk' ? 'R0' : money(estimate(m, r.km))) : dash;
+                const from = p.originKey === ADDRESS_KEY ? 'My saved address' : originLabel({ originKey: p.originKey });
+
+                el.summary.innerHTML =
+                    '<dl class="branch-sum">' +
+                    '<div><dt>Starting point</dt><dd>' + esc(from) + '</dd></div>' +
+                    '<div><dt>Destination</dt><dd>' + esc(b ? b.label : '') + '</dd></div>' +
+                    '<div><dt>Distance (by road)</dt><dd>' + esc(km) + '</dd></div>' +
+                    '<div><dt>Estimated travel time</dt><dd>' + esc(time) + '</dd></div>' +
+                    '</dl>' +
+                    '<div class="branch-costs" role="group" aria-label="Estimated travel costs">' +
+                    '<div><span>\uD83D\uDEB6 Walking</span><strong>' + esc(c('walk')) + '</strong></div>' +
+                    '<div><span>\uD83D\uDE95 Taxi</span><strong>' + esc(c('taxi')) + '</strong></div>' +
+                    '<div><span>\uD83D\uDE97 Uber/Bolt</span><strong>' + esc(c('rideshare')) + '</strong></div>' +
+                    '</div>' +
+                    (state === 'error' ? '<p class="travel-msg travel-err">' + esc(err) + '</p>' : '') +
+                    '<p class="travel-note">Estimated travel costs, not live fares: Taxi R' + RATES.taxi + '/km, Uber/Bolt R' + RATES.rideshare + '/km, one way, using the road distance.</p>';
+            }
+
+            function renderList(p) {
+                el.list.replaceChildren();
+                if (!p.branches.length) {
+                    const li = document.createElement('li');
+                    li.className = 'branch-empty';
+                    li.textContent = 'No branches found nearby.';
+                    el.list.appendChild(li);
+                    return;
+                }
+                p.branches.forEach((b) => {
+                    const li = document.createElement('li');
+                    li.setAttribute('role', 'none');
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'branch-item' + (b.id === p.branchId ? ' selected' : '');
+                    btn.setAttribute('role', 'radio');
+                    btn.setAttribute('aria-checked', b.id === p.branchId ? 'true' : 'false');
+                    const n = document.createElement('strong');
+                    n.textContent = b.label;
+                    const v = document.createElement('span');
+                    v.textContent = b.vicinity;
+                    btn.append(n, v);
+                    btn.addEventListener('click', () => pickBranch(p, b.id));
+                    li.appendChild(btn);
+                    el.list.appendChild(li);
+                });
+            }
+
+            function styleMarkers(p) {
+                const s = pinStyle(p);
+                p.markers.forEach((m) => {
+                    const on = m.id === p.branchId;
+                    m.marker.content = pin(s.text, s.color, on ? 34 : 24, on);
+                    m.marker.zIndex = on ? 900 : 1;
+                });
+            }
+
+            function buildMarkers(p) {
+                p.markers = p.branches.map((b) => {
+                    const marker = new p.Marker({
+                        map: map,
+                        position: { lat: b.lat, lng: b.lng },
+                        title: b.label,
+                        content: pin('', '#0d9488', 24, false)
+                    });
+                    marker.addEventListener('gmp-click', () => pickBranch(p, b.id));
+                    return { id: b.id, marker: marker };
+                });
+                styleMarkers(p);
+            }
+
+            function setOriginMarker(p, pos) {
+                if (!originMarker) {
+                    originMarker = new p.Marker({ map: map, position: pos, title: 'Starting point', zIndex: 1000, content: pin('', '#2563eb', 18, false) });
+                    originMarker.content.classList.add('dist-pin-you');
+                } else {
+                    originMarker.map = map;
+                    originMarker.position = pos;
+                }
+            }
+
+            function clearRoute() { if (poly) { poly.setMap(null); poly = null; } }
+
+            function drawRoute(o, b, route) {
+                clearRoute();
+                const bounds = new google.maps.LatLngBounds();
+                bounds.extend(o);
+                bounds.extend({ lat: b.lat, lng: b.lng });
+                if (route.path.length) {
+                    poly = new google.maps.Polyline({ path: route.path, strokeColor: '#2563eb', strokeOpacity: 0.9, strokeWeight: 5, map: map });
+                    route.path.forEach((pt) => bounds.extend(pt));
+                }
+                map.fitBounds(bounds, 40);
+            }
+
+            // Recalculate for the branch/starting point currently chosen in the modal.
+            // The old distance is dropped straight away and a stale answer can never overwrite a newer one.
+            async function updateRoute(p) {
+                const token = ++pickerSeq;
+                p.route = null;
+                el.confirm.disabled = true;
+                clearRoute();
+                renderSummary(p, 'loading');
+                try {
+                    const o = await pickerOrigin(p);
+                    const b = pickerBranch(p);
+                    if (picker !== p || token !== pickerSeq) return;
+                    setOriginMarker(p, o);
+                    const r = await computeRoute(o, b);
+                    if (picker !== p || token !== pickerSeq) return;
+                    p.route = summarise(r);
+                    drawRoute(o, b, p.route);
+                    renderSummary(p, 'ready');
+                    el.confirm.disabled = false;
+                } catch (err) {
+                    if (picker !== p || token !== pickerSeq) return;
+                    renderSummary(p, 'error', (err && err.message) || 'Could not work out the route.');
+                }
+            }
+
+            function pickBranch(p, id) {
+                if (picker !== p || p.branchId === id) return;
+                p.branchId = id;
+                styleMarkers(p);
+                renderList(p);
+                updateRoute(p);
+            }
+
+            async function initPicker(p) {
+                try {
+                    await mapsReady();
+                    const libs = await Promise.all([google.maps.importLibrary('maps'), google.maps.importLibrary('marker')]);
+                    const addr = await getAddress();
+                    if (picker !== p) return;
+                    p.Marker = libs[1].AdvancedMarkerElement;
+                    if (!map) {
+                        map = new libs[0].Map(el.map, {
+                            center: addr, zoom: 12, mapId: 'DEMO_MAP_ID',
+                            mapTypeControl: false, streetViewControl: false, fullscreenControl: false
+                        });
+                    } else {
+                        map.setCenter(addr);
+                        map.setZoom(12);
+                    }
+                    const branches = await getBranches(p.retailer);
+                    if (picker !== p) return;
+                    p.branches = branches.some((b) => b.id === p.branchId) ? branches.slice() : [p.g.branch].concat(branches);
+                    buildMarkers(p);
+                    renderList(p);
+                    setMsg('');
+                    await updateRoute(p);
+                } catch (err) {
+                    if (picker !== p) return;
+                    setMsg((err && err.message) || 'Something went wrong loading the map.');
+                }
+            }
+
+            function openPicker(store) {
+                const g = groups[store];
+                const retailer = retailerFor(store);
+                if (!g || !g.branch || !retailer || !el.modal) return;
+
+                const p = picker = {
+                    store: store, retailer: retailer, g: g,
+                    branchId: g.branch.id, originKey: g.originKey,
+                    branches: [], markers: [], route: null, Marker: null,
+                    lastFocus: document.activeElement
+                };
+                el.title.textContent = 'Choose a ' + retailer.name + ' branch';
+                el.sub.textContent = 'Pick a branch to see the route, distance and estimated travel costs.';
+                fillOriginSelect(p);
+                el.summary.replaceChildren();
+                el.list.replaceChildren();
+                el.confirm.disabled = true;
+                el.modal.hidden = false;
+                document.body.classList.add('dist-modal-open');
+                setMsg('Loading map\u2026');
+                el.close.focus();
+                initPicker(p);
+            }
+
+            function closePicker() {
+                const p = picker;
+                picker = null;
+                pickerSeq++;
+                el.modal.hidden = true;
+                document.body.classList.remove('dist-modal-open');
+                if (p) {
+                    p.markers.forEach((m) => { m.marker.map = null; });
+                    if (originMarker) originMarker.map = null;
+                    clearRoute();
+                    if (p.lastFocus && p.lastFocus.focus) p.lastFocus.focus();
+                }
+            }
+
+            // Confirm: this group (and only this group) takes the chosen branch and the route just calculated for it.
+            function confirmPicker() {
+                const p = picker;
+                if (!p || !p.route) return;
+                const b = pickerBranch(p);
+                const g = p.g;
+                if (!b || groups[p.store] !== g) { closePicker(); return; }
+
+                const branchChanged = g.branch.id !== b.id;
+                g.branch = b;
+                g.originKey = p.originKey;
+                g.route = p.route;
+                g.status = 'ready';
+                g.error = '';
+                g.token++;
+                closePicker();
+                renderAll();
+                if (branchChanged) refreshDependents(p.store);
+                showToast(b.label + ' selected \u00b7 ' + fmtKm(g.route.km) + ' km by road', 'success');
+            }
+
+            function onKeydown(e) {
+                if (!el.modal || el.modal.hidden) return;
+                if (e.key === 'Escape') { e.preventDefault(); closePicker(); return; }
+                if (e.key !== 'Tab') return;
+                const focusable = Array.from(el.dialog.querySelectorAll('button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+                    .filter((n) => n.offsetParent !== null);
+                if (!focusable.length) return;
+                const first = focusable[0], last = focusable[focusable.length - 1];
+                if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+                el = {
+                    modal: document.getElementById('branch-modal'),
+                    dialog: document.querySelector('#branch-modal .dist-dialog'),
+                    title: document.getElementById('branch-title'),
+                    sub: document.getElementById('branch-sub'),
+                    origin: document.getElementById('branch-origin'),
+                    map: document.getElementById('branch-map'),
+                    mapMsg: document.getElementById('branch-map-msg'),
+                    summary: document.getElementById('branch-summary'),
+                    list: document.getElementById('branch-list'),
+                    confirm: document.getElementById('branch-confirm'),
+                    close: document.getElementById('branch-close')
+                };
+                if (!el.modal) return;
+
+                el.close.addEventListener('click', closePicker);
+                document.getElementById('branch-cancel').addEventListener('click', closePicker);
+                document.getElementById('branch-backdrop').addEventListener('click', closePicker);
+                el.confirm.addEventListener('click', confirmPicker);
+                el.origin.addEventListener('change', () => {
+                    if (!picker) return;
+                    picker.originKey = el.origin.value;
+                    updateRoute(picker);
+                });
+                document.addEventListener('keydown', onKeydown);
+            });
+
+            window.TravelPlanner = {
+                travelHtml: travelHtml,
+                cost: cost,
+                isReady: isReady,
+                branchText: branchText,
+                prepareAll: prepareAll,
+                prune: prune,
+                retry: retry,
+                openPicker: openPicker
+            };
+        })();
+    </script>
+
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/2.1.4/toastr.min.css" rel="stylesheet" />
+
+    <style>
+
+        #toast-container > .toast {
+            position: relative;
+            top: auto;
+            right: auto;
+            bottom: auto;
+            left: auto;
+            transform: none;
+            transition: none;
+            pointer-events: auto;
+        }
+
+        /* ---------- Category sections ---------- */
+        .category-section {
+            scroll-margin-top: 90px;
+        }
+
+        /* ---------- Store filter dropdown ---------- */
+        .chip-dropdown {
+            position: relative;
+            display: inline-flex;
+        }
+
+            .chip-dropdown .chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+            }
+
+        .chip-caret {
+            flex-shrink: 0;
+            transition: transform 0.15s ease;
+        }
+
+        .chip-dropdown .chip[aria-expanded="true"] .chip-caret {
+            transform: rotate(180deg);
+        }
+
+        .chip-dropdown-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            min-width: 170px;
+            max-height: 260px;
+            overflow-y: auto;
+            background: var(--surface, #fff);
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+            padding: 4px;
+            z-index: 30;
+        }
+
+        .chip-dropdown-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 8px 10px;
+            border: none;
+            background: none;
+            border-radius: 6px;
+            font-size: 13.5px;
+            color: var(--text, #0f172a);
+            cursor: pointer;
+        }
+
+            .chip-dropdown-item:hover {
+                background: var(--surface-hover, #f1f5f9);
+            }
+
+            .chip-dropdown-item.active {
+                background: var(--accent-soft, #eef2ff);
+                color: var(--accent, #4338ca);
+                font-weight: 600;
+            }
+
+        .category-title {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+        }
+
+        .category-count {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted, #64748b);
+        }
+
+        .catalog-empty {
+            text-align: center;
+            color: var(--text-muted, #64748b);
+            padding: 40px 0;
+        }
+
+        /* ---------- Product image + favourite button ---------- */
+        .product-thumb {
+            position: relative;
+            isolation: isolate;
+        }
+
+            .product-thumb img {
+                position: absolute;
+                top: 0;
+                left: 0;
+                z-index: -1;
+                width: 100%;
+                height: 100%;
+                box-sizing: border-box;
+                padding: 10px;
+                object-fit: contain;
+            }
+
+        .store-badges {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            z-index: 2;
+            display: flex;
+            gap: 4px;
+        }
+
+        .product-thumb img.store-badge {
+            position: static;
+            z-index: auto;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: #fff;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+            object-fit: contain;
+            padding: 2px;
+            box-sizing: border-box;
+        }
+
+        .fav-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            z-index: 2;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border: none;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.92);
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+            .fav-btn svg {
+                width: 18px;
+                height: 18px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 2;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+            }
+
+            .fav-btn:hover {
+                color: #e11d48;
+            }
+
+            .fav-btn.active {
+                color: #e11d48;
+            }
+
+                .fav-btn.active svg {
+                    fill: currentColor;
+                }
+
+            .fav-btn:disabled {
+                opacity: 0.6;
+                cursor: wait;
+            }
+
+            .fav-btn:focus-visible, .category-fab:focus-visible {
+                outline: 2px solid #16a34a;
+                outline-offset: 2px;
+            }
+
+        /* ---------- Add-to-cart button (bottom right, separate from favourite) ---------- */
+        .add-btn {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            top: auto;
+            left: auto;
+            z-index: 2;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border: none;
+            border-radius: 50%;
+            background: #16a34a;
+            color: #fff;
+            font-size: 18px;
+            line-height: 1;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+            cursor: pointer;
+        }
+
+            .add-btn:hover {
+                background: #15803d;
+            }
+
+            .add-btn:active {
+                transform: scale(0.95);
+            }
+
+            .add-btn:focus-visible {
+                outline: 2px solid #16a34a;
+                outline-offset: 2px;
+            }
+
+        /* ---------- Product card right-click context menu ---------- */
+        .card-context-menu {
+            position: fixed;
+            z-index: 50;
+            min-width: 240px;
+            background: var(--surface, #fff);
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+            padding: 4px;
+        }
+
+        .card-context-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            text-align: left;
+            padding: 9px 10px;
+            border: none;
+            background: none;
+            border-radius: 6px;
+            font-size: 13.5px;
+            font-family: inherit;
+            color: var(--text, #0f172a);
+            cursor: pointer;
+        }
+
+            .card-context-item svg {
+                width: 16px;
+                height: 16px;
+                flex-shrink: 0;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 2;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+            }
+
+            .card-context-item:hover {
+                background: var(--surface-hover, #f1f5f9);
+                color: #dc2626;
+            }
+
+        /* ---------- AI recommendations section ---------- */
+        .ai-section {
+            margin-bottom: 28px;
+            scroll-margin-top: 90px;
+        }
+
+        .ai-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .ai-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 12px;
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 999px;
+            background: var(--surface, #fff);
+            color: var(--text-muted, #64748b);
+            font-family: inherit;
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+            .ai-toggle:hover {
+                border-color: #16a34a;
+                color: #16a34a;
+            }
+
+            .ai-toggle:focus-visible {
+                outline: 2px solid #16a34a;
+                outline-offset: 2px;
+            }
+
+        .ai-toggle-caret {
+            flex-shrink: 0;
+            transition: transform 0.15s ease;
+        }
+
+        .ai-section.is-collapsed .ai-toggle-caret {
+            transform: rotate(180deg);
+        }
+
+        .ai-section.is-collapsed .ai-body {
+            display: none;
+        }
+
+        /* Hidden automatically while the search box has text */
+        .ai-section.is-search-hidden {
+            display: none;
+        }
+
+        .ai-tag {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: var(--accent-soft, #eef2ff);
+            color: var(--accent, #4338ca);
+        }
+
+        .ai-subtitle {
+            margin: -4px 0 12px;
+            font-size: 13px;
+            color: var(--text-muted, #64748b);
+        }
+
+        .ai-card {
+            display: flex;
+            flex-direction: column;
+            height: auto;
+        }
+
+        .ai-reason {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            margin-top: auto;
+            padding: 8px 10px 10px;
+            border-top: 1px solid var(--border, #e2e8f0);
+            font-size: 12px;
+            line-height: 1.35;
+            color: var(--text-muted, #64748b);
+        }
+
+            .ai-reason img {
+                width: 14px;
+                height: 14px;
+                flex-shrink: 0;
+                margin-top: 1px;
+                object-fit: contain;
+            }
+
+        .card-grid.is-loading .ai-card {
+            opacity: 0.45;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+        }
+
+        .ai-reload-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            min-height: 220px;
+            padding: 16px;
+            border: 2px dashed var(--border, #cbd5e1);
+            border-radius: 14px;
+            background: var(--surface, #fff);
+            color: var(--text-muted, #64748b);
+            font-family: inherit;
+            font-size: 13.5px;
+            font-weight: 600;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.15s ease, color 0.15s ease;
+        }
+
+            .ai-reload-card img {
+                width: 64px;
+                height: 64px;
+                object-fit: contain;
+            }
+
+            .ai-reload-card:hover:not(:disabled) {
+                border-color: #16a34a;
+                color: #16a34a;
+            }
+
+            .ai-reload-card:focus-visible {
+                outline: 2px solid #16a34a;
+                outline-offset: 2px;
+            }
+
+            .ai-reload-card:disabled {
+                opacity: 0.6;
+                cursor: wait;
+            }
+
+        .ai-empty {
+            grid-column: 1 / -1;
+            margin: 0;
+            padding: 24px 0;
+            text-align: center;
+            color: var(--text-muted, #64748b);
+        }
+
+        /* Loading placeholders (not .product-card, so right-click / long-press ignore them) */
+        .ai-skeleton {
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 14px;
+            overflow: hidden;
+            background: var(--surface, #fff);
+        }
+
+            .ai-skeleton .sk-thumb {
+                height: 150px;
+            }
+
+            .ai-skeleton .sk-body {
+                padding: 12px;
+            }
+
+            .ai-skeleton .sk-line {
+                display: block;
+                height: 12px;
+                margin-bottom: 8px;
+                border-radius: 6px;
+            }
+
+                .ai-skeleton .sk-line.short {
+                    width: 55%;
+                }
+
+            .ai-skeleton .sk-thumb,
+            .ai-skeleton .sk-line {
+                background: linear-gradient(90deg, #eef1f5 25%, #f8fafc 50%, #eef1f5 75%);
+                background-size: 200% 100%;
+                animation: ai-shimmer 1.3s linear infinite;
+            }
+
+        @@keyframes ai-shimmer {
+            from {
+                background-position: 200% 0;
+            }
+
+            to {
+                background-position: -200% 0;
+            }
+        }
+
+        @@media (prefers-reduced-motion: reduce) {
+            .ai-skeleton .sk-thumb,
+            .ai-skeleton .sk-line {
+                animation: none;
+            }
+        }
+
+        /* ---------- Onboarding: budget nudge ---------- */
+        .budget-nudge-hint {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin: 0 0 10px;
+            padding: 9px 12px;
+            border-radius: 10px;
+            background: rgba(22, 163, 74, 0.1);
+            color: #15803d;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.35;
+            text-align: left;
+        }
+
+            .budget-nudge-hint svg {
+                width: 16px;
+                height: 16px;
+                flex-shrink: 0;
+                margin-top: 1px;
+                animation: budget-arrow-bounce 1s ease-in-out infinite;
+            }
+
+        /* Steady green ring + a soft pulse that radiates outward until the user types */
+        .budget-set-box.nudge .budget-set-row {
+            border-radius: 12px;
+            outline: 2px solid #16a34a;
+            outline-offset: 2px;
+            animation: budget-nudge-pulse 1.6s ease-out infinite;
+        }
+
+        .budget-set-box.nudge.has-value .budget-set-row {
+            animation: none;
+        }
+
+        .budget-set-box.nudge.has-value .budget-nudge-hint svg {
+            animation: none;
+        }
+
+        /* Header cart button keeps pulsing if the drawer is closed before a budget is set */
+        .icon-btn.nudge-pulse {
+            border-radius: 50%;
+            animation: budget-nudge-pulse 1.6s ease-out infinite;
+        }
+
+        @@keyframes budget-nudge-pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.55);
+            }
+
+            70%, 100% {
+                box-shadow: 0 0 0 12px rgba(22, 163, 74, 0);
+            }
+        }
+
+        @@keyframes budget-arrow-bounce {
+            0%, 100% {
+                transform: translateY(-2px);
+            }
+
+            50% {
+                transform: translateY(3px);
+            }
+        }
+
+        @@media (prefers-reduced-motion: reduce) {
+            .budget-set-box.nudge .budget-set-row,
+            .icon-btn.nudge-pulse,
+            .budget-nudge-hint svg {
+                animation: none;
+            }
+        }
+
+        /* ---------- Category FABs (bottom right) ---------- */
+        .category-fabs {
+            position: fixed;
+            right: 2px;
+            bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+            z-index: 30;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 85vh;
+            overflow-y: auto;
+            padding: 10px 12px;
+            scrollbar-width: none;
+        }
+
+            .category-fabs::-webkit-scrollbar {
+                display: none;
+            }
+
+        .category-fab {
+            width: 60px;
+            height: 60px;
+            padding: 0;
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            border-radius: 50%;
+            background: #fff;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            flex-shrink: 0;
+            font-family: inherit;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+            .category-fab:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 5px 12px rgba(0, 0, 0, 0.22);
+            }
+
+            .category-fab:active {
+                transform: scale(0.95);
+            }
+
+            .category-fab img {
+                width: 35px;
+                height: 35px;
+                object-fit: contain;
+                display: block;
+                border-radius: 50%;
+            }
+
+        /* Back to top: collapsed (zero height, no gap) until the page is scrolled,
+           then it grows in below the category buttons and they glide up to make room. */
+        .back-to-top {
+            max-height: 0;
+            margin-top: -10px;
+            border-width: 0;
+            box-shadow: none;
+            opacity: 0;
+            transform: scale(0.6);
+            pointer-events: none;
+            transition: max-height 0.2s ease, margin-top 0.2s ease, opacity 0.2s ease, transform 0.2s ease, box-shadow 0.15s ease;
+        }
+
+            .back-to-top.visible {
+                max-height: 60px;
+                margin-top: 0;
+                border-width: 1px;
+                box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
+                opacity: 1;
+                transform: none;
+                pointer-events: auto;
+            }
+
+                .back-to-top.visible:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 5px 12px rgba(0, 0, 0, 0.22);
+                }
+
+                .back-to-top.visible:active {
+                    transform: scale(0.95);
+                }
+
+        @@media (max-width: 480px) {
+            .category-fabs {
+                right: 0;
+                padding: 8px;
+                gap: 8px;
+            }
+
+            .category-fab {
+                width: 34px;
+                height: 34px;
+            }
+
+            .back-to-top {
+                margin-top: -8px;
+            }
+
+            .category-fab img {
+                width: 22px;
+                height: 22px;
+            }
+        }
+
+        @@media (prefers-reduced-motion: reduce) {
+            .category-fab,
+            .back-to-top {
+                transition: none;
+            }
+        }
+
+        /* ---------- Distance filter modal ---------- */
+        body.dist-modal-open {
+            overflow: hidden;
+        }
+
+        .dist-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+            .dist-modal[hidden] {
+                display: none;
+            }
+
+        .dist-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.55);
+        }
+
+        .dist-dialog {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            width: min(720px, 100%);
+            max-height: min(92vh, 880px);
+            background: var(--surface, #fff);
+            color: var(--text, #0f172a);
+            border-radius: 14px;
+            box-shadow: 0 20px 50px rgba(15, 23, 42, 0.3);
+            overflow: hidden;
+        }
+
+        .dist-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 16px 18px 12px;
+            border-bottom: 1px solid var(--border, #e2e8f0);
+        }
+
+        .dist-head-text {
+            min-width: 0;
+        }
+
+        .dist-head h2 {
+            margin: 0;
+            font-size: 17px;
+            font-weight: 700;
+        }
+
+        .dist-sub {
+            margin: 4px 0 0;
+            font-size: 12.5px;
+            color: var(--text-muted, #64748b);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .dist-x {
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 8px;
+            background: none;
+            font-size: 24px;
+            line-height: 1;
+            color: var(--text-muted, #64748b);
+            cursor: pointer;
+        }
+
+            .dist-x:hover {
+                background: var(--surface-hover, #f1f5f9);
+            }
+
+        .dist-body {
+            padding: 14px 18px;
+            overflow-y: auto;
+        }
+
+        .dist-map-wrap {
+            position: relative;
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 10px;
+            overflow: hidden;
+            background: #e5e7eb;
+        }
+
+        .dist-map {
+            width: 100%;
+            height: 320px;
+        }
+
+        .dist-map-msg {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 20px;
+            text-align: center;
+            font-size: 14px;
+            background: rgba(255, 255, 255, 0.92);
+            color: #0f172a;
+        }
+
+            .dist-map-msg[hidden] {
+                display: none;
+            }
+
+        .dist-spinner {
+            width: 22px;
+            height: 22px;
+            border: 3px solid #cbd5e1;
+            border-top-color: #16a34a;
+            border-radius: 50%;
+            animation: dist-spin 0.8s linear infinite;
+        }
+
+        @@keyframes dist-spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .dist-radius {
+            display: flex;
+            gap: 6px;
+            margin-top: 14px;
+            padding: 3px;
+            background: var(--surface-hover, #f1f5f9);
+            border-radius: 999px;
+        }
+
+        .dist-radius-btn {
+            flex: 1;
+            padding: 8px 6px;
+            border: none;
+            border-radius: 999px;
+            background: none;
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-muted, #64748b);
+            cursor: pointer;
+        }
+
+            .dist-radius-btn.active {
+                background: var(--surface, #fff);
+                color: var(--accent, #16a34a);
+                box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18);
+            }
+
+        .dist-within {
+            margin: 16px 0 8px;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .dist-retailers {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .dist-retailer {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            column-gap: 8px;
+            row-gap: 2px;
+            padding: 9px 11px;
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 10px;
+            font-size: 13.5px;
+        }
+
+        .dist-retailer-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .dist-retailer-name {
+            font-weight: 600;
+        }
+
+        .dist-retailer-mark {
+            font-weight: 700;
+        }
+
+        .dist-retailer.is-in .dist-retailer-mark {
+            color: #16a34a;
+        }
+
+        .dist-retailer.is-out {
+            color: var(--text-muted, #64748b);
+        }
+
+            .dist-retailer.is-out .dist-retailer-mark {
+                color: #dc2626;
+            }
+
+        .dist-retailer-detail {
+            grid-column: 2 / 4;
+            font-size: 12px;
+            color: var(--text-muted, #64748b);
+        }
+
+        .dist-note {
+            margin: 12px 0 0;
+            padding: 9px 12px;
+            border-radius: 8px;
+            background: #fef3c7;
+            color: #92400e;
+            font-size: 13px;
+        }
+
+            .dist-note[hidden] {
+                display: none;
+            }
+
+        .dist-foot {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 18px;
+            border-top: 1px solid var(--border, #e2e8f0);
+        }
+
+        .dist-spacer {
+            flex: 1;
+        }
+
+        .dist-btn {
+            padding: 9px 16px;
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 8px;
+            background: var(--surface, #fff);
+            color: var(--text, #0f172a);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+            .dist-btn:hover:not(:disabled) {
+                background: var(--surface-hover, #f1f5f9);
+            }
+
+            .dist-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+        .dist-btn-primary {
+            border-color: #16a34a;
+            background: #16a34a;
+            color: #fff;
+        }
+
+            .dist-btn-primary:hover:not(:disabled) {
+                background: #15803d;
+            }
+
+        .dist-btn-link {
+            border-color: transparent;
+            background: none;
+            color: var(--text-muted, #64748b);
+            text-decoration: underline;
+        }
+
+            .dist-btn-link[hidden] {
+                display: none;
+            }
+
+        .dist-x:focus-visible,
+        .dist-radius-btn:focus-visible,
+        .dist-btn:focus-visible {
+            outline: 2px solid #16a34a;
+            outline-offset: 2px;
+        }
+
+        /* Map pins (custom AdvancedMarker content) */
+        .dist-pin {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            box-shadow: 0 1px 4px rgba(15, 23, 42, 0.45);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            box-sizing: border-box;
+        }
+
+        .dist-pin-you {
+            box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.25), 0 1px 4px rgba(15, 23, 42, 0.45);
+        }
+
+        .dist-info {
+            font-size: 13px;
+            color: #0f172a;
+            max-width: 220px;
+        }
+
+        .dist-info-km {
+            margin-top: 2px;
+            color: #16a34a;
+            font-weight: 600;
+        }
+
+        @@media (max-width: 520px) {
+            .dist-modal {
+                padding: 8px;
+            }
+
+            .dist-map {
+                height: 260px;
+            }
+
+            .dist-retailers {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ---------- Shopping list: store branch + estimated travel costs ---------- */
+        .travel-block {
+            margin: 10px 0 4px;
+        }
+
+        .branch-pick {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 9px 12px;
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 10px;
+            background: var(--surface, #fff);
+            color: var(--text, #0f172a);
+            font: inherit;
+            font-size: 13.5px;
+            font-weight: 600;
+            text-align: left;
+            cursor: pointer;
+        }
+
+            .branch-pick:hover {
+                border-color: #16a34a;
+                background: var(--surface-hover, #f1f5f9);
+            }
+
+            .branch-pick:focus-visible,
+            .travel-retry:focus-visible,
+            .branch-item:focus-visible,
+            .branch-origin-select:focus-visible {
+                outline: 2px solid #16a34a;
+                outline-offset: 2px;
+            }
+
+            .branch-pick svg {
+                flex-shrink: 0;
+                width: 16px;
+                height: 16px;
+                color: #16a34a;
+            }
+
+        .branch-pick-name {
+            flex: 1;
+            min-width: 0;
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            text-underline-offset: 3px;
+        }
+
+        .branch-pick-caret {
+            color: var(--text-muted, #64748b);
+        }
+
+        .branch-meta {
+            margin: 6px 2px 0;
+            font-size: 12.5px;
+            color: var(--text-muted, #64748b);
+        }
+
+            .branch-meta strong {
+                color: var(--text, #0f172a);
+                font-size: 14px;
+            }
+
+        .travel-msg {
+            margin: 4px 0;
+            font-size: 12.5px;
+            color: var(--text-muted, #64748b);
+        }
+
+        .travel-err {
+            color: #b91c1c;
+        }
+
+        .travel-retry {
+            margin-left: 6px;
+            padding: 0;
+            border: none;
+            background: none;
+            color: #16a34a;
+            font: inherit;
+            font-weight: 600;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        .travel-note {
+            margin: 6px 2px 0;
+            font-size: 11.5px;
+            line-height: 1.4;
+            color: var(--text-muted, #64748b);
+        }
+
+        .store-group .transport-options {
+            flex-wrap: wrap;
+        }
+
+        .transport-pill:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+
+        /* Branch modal (sits above the shopping-list drawer) */
+        #branch-modal {
+            z-index: 1100;
+        }
+
+        .branch-origin-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .branch-origin-select {
+            flex: 1;
+            min-width: 0;
+            padding: 7px 10px;
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 8px;
+            background: var(--surface, #fff);
+            color: var(--text, #0f172a);
+            font: inherit;
+            font-size: 13.5px;
+        }
+
+        .branch-summary {
+            margin-top: 12px;
+        }
+
+        .branch-sum {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 14px;
+            margin: 0;
+        }
+
+            .branch-sum dt {
+                font-size: 11.5px;
+                color: var(--text-muted, #64748b);
+            }
+
+            .branch-sum dd {
+                margin: 1px 0 0;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
+        .branch-costs {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+            .branch-costs > div {
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+                padding: 9px 11px;
+                border: 1px solid var(--border, #e2e8f0);
+                border-radius: 10px;
+                font-size: 12.5px;
+            }
+
+            .branch-costs strong {
+                font-size: 15px;
+            }
+
+        .branch-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+
+        .branch-item {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+            width: 100%;
+            padding: 9px 12px;
+            border: 1px solid var(--border, #e2e8f0);
+            border-radius: 10px;
+            background: var(--surface, #fff);
+            color: var(--text, #0f172a);
+            font: inherit;
+            font-size: 13.5px;
+            text-align: left;
+            cursor: pointer;
+        }
+
+            .branch-item span {
+                font-size: 12px;
+                color: var(--text-muted, #64748b);
+            }
+
+            .branch-item:hover {
+                background: var(--surface-hover, #f1f5f9);
+            }
+
+            .branch-item.selected {
+                border-color: #16a34a;
+                box-shadow: 0 0 0 1px #16a34a inset;
+                background: #f0fdf4;
+                color: #0f172a;
+            }
+
+        .branch-empty {
+            font-size: 13px;
+            color: var(--text-muted, #64748b);
+        }
+
+        .branch-pin-selected {
+            box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.35), 0 1px 4px rgba(15, 23, 42, 0.45);
+        }
+
+        /* Quantity stepper on each shopping-list drawer row (one row per distinct item) */
+        .line-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+            .line-item > div:first-child {
+                flex: 1;
+                min-width: 0;
+            }
+
+        .qty-stepper {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 0 0 auto;
+        }
+
+            .qty-stepper button {
+                width: 24px;
+                height: 24px;
+                border: 1px solid var(--border, #e2e8f0);
+                border-radius: 6px;
+                background: var(--surface, #fff);
+                color: var(--text, #0f172a);
+                font: inherit;
+                font-size: 14px;
+                line-height: 1;
+                cursor: pointer;
+            }
+
+                .qty-stepper button:hover {
+                    background: var(--surface-hover, #f1f5f9);
+                }
+
+            .qty-stepper .qty-value {
+                min-width: 18px;
+                text-align: center;
+                font-size: 13.5px;
+                font-weight: 600;
+            }
+
+        .line-item .line-total {
+            flex: 0 0 auto;
+            font-size: 13.5px;
+            font-weight: 700;
+            min-width: 60px;
+            text-align: right;
+        }
+
+        @@media (max-width: 520px) {
+            .branch-sum {
+                grid-template-columns: 1fr;
+            }
+
+            .branch-costs {
+                grid-template-columns: 1fr;
+            }
+
+            .branch-origin-row {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 4px;
+            }
+        }
+    </style>
+
+    <script>
+
+        if (!window.jQuery) {
+            document.write('<scr' + 'ipt src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></scr' + 'ipt>');
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/2.1.4/toastr.min.js"></script>
+
+    <script>
+        toastr.options = {
+            "closeButton": true,
+            "debug": false,
+            "newestOnTop": false,
+            "progressBar": false,
+            "positionClass": "toast-top-full-width",
+            "preventDuplicates": false,
+            "showDuration": "300",
+            "hideDuration": "1000",
+            "timeOut": "10000",
+            "extendedTimeOut": "1000",
+            "showEasing": "swing",
+            "hideEasing": "linear",
+            "showMethod": "fadeIn",
+            "hideMethod": "fadeOut"
+        };
+
+        $(function () {
+            @if (TempData["Success"] != null)
+            {
+                <text>toastr.success(@Html.Raw(Json.Encode(TempData["Success"])), '', { timeOut: ONBOARDING ? 4000 : 10000 });</text>
+            }
+        });
+    </script>
+
+}

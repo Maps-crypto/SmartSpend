@@ -1,0 +1,89 @@
+﻿@model IEnumerable<SmartSpend.Models.UserPreferences>
+
+@{
+    Layout = null;
+}
+
+<!DOCTYPE html>
+
+<html>
+<head>
+    <meta name="viewport" content="width=device-width" />
+    <title>Index</title>
+</head>
+<body>
+    <p>
+        @Html.ActionLink("Create New", "Create")
+    </p>
+    <table class="table">
+        <tr>
+            <th>
+                @Html.DisplayNameFor(model => model.UserId)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.Address)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.ShoppingFrequency)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.DietaryNeeds)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.Allergies)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.ProductStyle)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.CookingStyle)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.Lifestyle)
+            </th>
+            <th>
+                @Html.DisplayNameFor(model => model.Notifications)
+            </th>
+            <th></th>
+        </tr>
+    
+    @foreach (var item in Model) {
+        <tr>
+            <td>
+                @Html.DisplayFor(modelItem => item.UserId)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.Address)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.ShoppingFrequency)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.DietaryNeeds)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.Allergies)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.ProductStyle)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.CookingStyle)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.Lifestyle)
+            </td>
+            <td>
+                @Html.DisplayFor(modelItem => item.Notifications)
+            </td>
+            <td>
+                @Html.ActionLink("Edit", "Edit", new { id=item.UserPreferencesId }) |
+                @Html.ActionLink("Details", "Details", new { id=item.UserPreferencesId }) |
+                @Html.ActionLink("Delete", "Delete", new { id=item.UserPreferencesId })
+            </td>
+        </tr>
+    }
+    
+    </table>
+</body>
+</html>

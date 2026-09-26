@@ -1,0 +1,187 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>@ViewBag.Title - SafeSpend</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="@Url.Content("~/Content/mainStyle.css")">
+    <link rel="icon" type="image/png" href="@Url.Content("~/Content/img/wallet.png")" />
+
+    <!-- Open-state rules for the hamburger drawer. Kept here (with !important) so the
+         menu works on these pages regardless of what mainStyle.css does or doesn't define. -->
+    <style>
+        .overlay.is-open {
+            opacity: 1 !important;
+            visibility: visible !important;
+            pointer-events: auto !important;
+            z-index: 1200 !important;
+        }
+
+        .drawer-left.is-open {
+            transform: translateX(0) !important;
+            visibility: visible !important;
+            z-index: 1201 !important;
+        }
+    </style>
+</head>
+<body class="main-page">
+
+    <!-- ===== HEADER ===== -->
+    <header class="app-header">
+        <div class="header-left">
+            <button class="icon-btn" id="nav-toggle" aria-label="Open menu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="3" y1="6" x2="21" y2="6" />
+                    <line x1="3" y1="12" x2="21" y2="12" />
+                    <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+            </button>
+            <div class="header-logo">
+                <div>
+                    <a href="@Url.Action("Main","Home")"><img src="@Url.Content("~/Content/img/wallet.png")" width="45" height="45" /></a>
+                </div>
+                SafeSpend
+            </div>
+        </div>
+
+        @*<button class="icon-btn" id="cart-toggle" aria-label="Open shopping list">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
+                    <path d="M3 6h18" />
+                    <path d="M16 10a4 4 0 0 1-8 0" />
+                </svg>
+                <span class="cart-badge" id="cart-badge">0</span>
+            </button>*@
+    </header>
+
+    @RenderBody()
+
+    <!-- ===== OVERLAY ===== -->
+    <div class="overlay" id="overlay"></div>
+
+    <!-- ===== LEFT DRAWER: NAV MENU ===== -->
+    <aside class="drawer drawer-left" id="nav-drawer">
+        <div class="drawer-header">
+            <h2>Menu</h2>
+            <button class="icon-btn" id="nav-close" aria-label="Close menu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="drawer-body">
+            <div class="nav-user">
+                <div class="nav-avatar">@ViewBag.lett</div>
+                <div>
+                    <div class="name">@ViewBag.email</div>
+                    @*  <div class="email">katiso@@example.com</div>*@
+                </div>
+            </div>
+
+            <ul class="nav-list">
+                <li>
+                    <a class="nav-link" href="@Url.Action("Main", "Home")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z" /></svg>
+                        Main Menu
+                    </a>
+                </li>
+                @*       <li>
+                        <a class="nav-link primary" href="@Url.Action("Profile", "Home")">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                            Profile
+                        </a>
+                    </li>*@
+                <li>
+                    <a class="nav-link" href="@Url.Action("Favourites", "Home")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z" /></svg>
+                        My Favourites
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link" href="@Url.Action("update", "UserPreferences")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" /></svg>
+                        Preferences
+                    </a>
+                </li>
+                <li>
+                    <a class="nav-link" href="@Url.Action("History", "Home")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l4 2" /></svg>
+                        Shopping List History
+                    </a>
+                </li>
+            </ul>
+
+            <div class="nav-divider"></div>
+
+            <ul class="nav-list">
+                <li>
+                    <button class="nav-link danger" id="logout-btn" data-url="@Url.Action("Login", "Account")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+                        Log Out
+                    </button>
+                </li>
+            </ul>
+        </div>
+    </aside>
+
+    <!-- ===== RIGHT DRAWER: SHOPPING LIST ===== -->
+    <aside class="drawer drawer-right" id="cart-drawer">
+        <div class="drawer-header">
+            <h2>Shopping List</h2>
+            <button class="icon-btn" id="cart-close" aria-label="Close shopping list">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="drawer-body" id="cart-body"></div>
+        <div class="drawer-footer" id="cart-footer"></div>
+    </aside>
+
+    <div class="toast" id="toast"></div>
+
+    @*<script src="@Url.Content("~/Scripts/mainScript.js")"></script>*@
+
+    <!-- Self-contained menu behaviour (open/close, overlay, Esc, log out).
+         Independent of mainScript.js so it can't be broken by catalogue/cart code. -->
+    <script>
+        (function () {
+            var toggle = document.getElementById('nav-toggle');
+            var closeBt = document.getElementById('nav-close');
+            var drawer = document.getElementById('nav-drawer');
+            var overlay = document.getElementById('overlay');
+            var logout = document.getElementById('logout-btn');
+            if (!toggle || !drawer || !overlay) return;
+
+            function setOpen(open) {
+                drawer.classList.toggle('open', open);
+                drawer.classList.toggle('is-open', open);
+                overlay.classList.toggle('open', open);
+                overlay.classList.toggle('is-open', open);
+                document.body.style.overflow = open ? 'hidden' : '';
+                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            }
+
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.addEventListener('click', function () { setOpen(true); });
+            if (closeBt) closeBt.addEventListener('click', function () { setOpen(false); });
+            overlay.addEventListener('click', function () { setOpen(false); });
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') setOpen(false);
+            });
+
+            if (logout) {
+                logout.addEventListener('click', function () {
+                    window.location.href = logout.getAttribute('data-url');
+                });
+            }
+        })();
+    </script>
+
+    @RenderSection("scripts", required: false)
+</body>
+</html>
