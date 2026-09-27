@@ -1,0 +1,5 @@
+{
+  "name": "SmartSpend - Grocery Budget & Price Comparison",
+  "description": "Smart grocery budget tracker, South African supermarket price comparison (Checkers, Woolworths, Pick n Pay, Shoprite), true cost transport calculator, and personalized AI shopping recommendations.",
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
